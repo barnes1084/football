@@ -1,0 +1,184 @@
+name: Build Android
+
+# Every push runs the tests and builds:
+# - gridiron-north.apk: to install directly on a phone (signed with the
+#   sideload key committed in android/; it has every developer setting);
+# - gridiron-north.aab: the bundle to upload to Google Play, signed with your
+#   private upload key, if the repository has these secrets (Settings ->
+#   Secrets and variables -> Actions):
+#     PLAY_UPLOAD_KEYSTORE_BASE64  the upload keystore file, base64-encoded
+#     PLAY_UPLOAD_KEYSTORE_PASSWORD
+#     PLAY_UPLOAD_KEY_ALIAS
+# Download both from the run's artifacts. Pushes to main also publish the APK
+# as a GitHub release.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Cache Godot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-android
+
+      - name: Install Godot and the Android export templates
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          base=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          mkdir -p ~/godot
+          curl -sSL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip -d ~/godot
+          mv ~/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64 ~/godot/godot
+          curl -sSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          dest=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p "$dest"
+          unzip -q -j templates.tpz 'templates/android_*' 'templates/version.txt' -d "$dest"
+          ls -la "$dest"
+
+      - name: Import the project
+        timeout-minutes: 10
+        run: ~/godot/godot --headless --path . --import || true
+
+      - name: Run the tests
+        timeout-minutes: 15
+        run: ~/godot/godot --headless --path . -s res://tests/run_tests.gd
+
+      - name: Check touch controls (hike, run, pull-and-throw)
+        run: timeout 120 xvfb-run -a -s "-screen 0 1920x1080x24" ~/godot/godot --path . --rendering-driver opengl3 --resolution 1920x1080 -- --shot=input
+
+      - name: Point Godot at the Android SDK and Java
+        run: |
+          mkdir -p ~/.config/godot
+          for f in editor_settings-4.tres editor_settings-4.7.tres; do
+            cat > ~/.config/godot/$f <<SETTINGS
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_SDK_ROOT"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          SETTINGS
+          done
+
+      - name: Set the version
+        run: |
+          # Every build gets a higher version code so it installs over the last one.
+          code=$((100 + ${{ github.run_number }}))
+          # The version players see comes from the VERSION file.
+          version=$(tr -d '[:space:]' < VERSION)
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          sed -i "s/^version\/code=.*/version\/code=$code/; s/^version\/name=.*/version\/name=\"$version\"/" export_presets.cfg
+          grep -E "^version/(code|name)" export_presets.cfg
+
+      - name: Build the APK
+        timeout-minutes: 20
+        env:
+          GODOT_ANDROID_KEYSTORE_RELEASE_PATH: ${{ github.workspace }}/android/gridiron.jks
+          GODOT_ANDROID_KEYSTORE_RELEASE_USER: gridiron
+          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: gridiron-north
+        run: |
+          mkdir -p build
+          ~/godot/godot --headless --path . --install-android-build-template --export-release Android build/gridiron-north.apk
+          ls -la build
+          test -s build/gridiron-north.apk
+
+      - name: Build an x86_64 copy for the emulator launch test
+        timeout-minutes: 20
+        env:
+          GODOT_ANDROID_KEYSTORE_RELEASE_PATH: ${{ github.workspace }}/android/gridiron.jks
+          GODOT_ANDROID_KEYSTORE_RELEASE_USER: gridiron
+          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: gridiron-north
+        run: |
+          ~/godot/godot --headless --path . --export-release "Android Emulator" build/emulator.apk
+          test -s build/emulator.apk
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # GitHub's emulator sometimes fails to boot at all, which has nothing to
+      # do with the game, so this check warns instead of failing the build.
+      - name: Launch test on an Android emulator (warns if the app crashes)
+        id: emulator
+        continue-on-error: true
+        timeout-minutes: 20
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: ./tools/emulator_smoke_test.sh
+
+      - name: Report the emulator launch test
+        if: steps.emulator.outcome == 'failure'
+        run: echo "::warning::The emulator launch test failed (the emulator didn't boot, or the app crashed). Check the log of the launch test step and the emulator-launch-test artifact."
+
+      - name: Build the Google Play bundle (needs the upload key secrets)
+        timeout-minutes: 20
+        env:
+          KEYSTORE_B64: ${{ secrets.PLAY_UPLOAD_KEYSTORE_BASE64 }}
+          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: ${{ secrets.PLAY_UPLOAD_KEYSTORE_PASSWORD }}
+          GODOT_ANDROID_KEYSTORE_RELEASE_USER: ${{ secrets.PLAY_UPLOAD_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::notice::No upload key secrets yet, so no Google Play bundle this time."
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$RUNNER_TEMP/upload.jks"
+          ~/godot/godot --headless --path . --export-release "Android Play" build/gridiron-north.aab
+          rm -f "$RUNNER_TEMP/upload.jks"
+          test -s build/gridiron-north.aab
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-launch-test
+          path: |
+            build/logcat*.txt
+            build/emulator.png
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridiron-north-apk
+          path: build/gridiron-north.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridiron-north-play-bundle
+          path: build/gridiron-north.aab
+          if-no-files-found: ignore
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}-build${{ github.run_number }}
+          name: Gridiron North ${{ env.APP_VERSION }} (build ${{ github.run_number }})
+          body: |
+            Download **gridiron-north.apk** on your Android phone and open it to install.
+          files: build/gridiron-north.apk

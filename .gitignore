@@ -1,0 +1,7 @@
+.godot/
+build/
+*.tmp
+.DS_Store
+android/build/
+android/.build_version
+__pycache__/
