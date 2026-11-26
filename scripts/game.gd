@@ -43,6 +43,14 @@ class P:
 	var target: P = null
 	var tgt := Vector2.ZERO
 	var engaged: P = null
+	## Offensive linemen: part of the wall. `home` is his square (where he
+	## lined up), `give` how far he's been driven back from the wall line.
+	var wall := false
+	var home := Vector2.ZERO
+	var give := 0.0
+	## The span of field across his square covers (the end men reach outside).
+	var lo := 0.0
+	var hi := 0.0
 	var shed := 0.0
 	var free := 0.0
 	var stun := 0.0
@@ -109,6 +117,7 @@ var events := []
 var stats := [{pass_yds = 0, rush_yds = 0, to = 0, sacks = 0, first = 0}, {pass_yds = 0, rush_yds = 0, to = 0, sacks = 0, first = 0}]
 var rng := RandomNumberGenerator.new()
 var _dt := 0.0
+var _move := Vector2.ZERO
 var _next := {}
 var plays := 0
 ## The last play, for the tests and the balance probe.
@@ -751,8 +760,19 @@ func _snap() -> void:
 	if off_call.kind == "run" and off_call.carrier == "QB":
 		handed = true
 		qb.job = "carry"
-	# Blockers pick their men.
+	# Blockers pick their men; the linemen form the wall.
 	for p: P in offense():
+		if p.role == "OL":
+			p.wall = true
+			p.home = p.at
+			p.give = 0.0
+	# Each lineman's square; the tackles at the ends reach outside for the edge rushers.
+	var line := offense().filter(func(p): return p.wall)
+	line.sort_custom(func(a, b): return a.home.y < b.home.y)
+	for i in line.size():
+		var p: P = line[i]
+		p.lo = p.home.y - Tune.v.wallSquare - (Tune.v.wallEdge if i == 0 else 0.0)
+		p.hi = p.home.y + Tune.v.wallSquare + (Tune.v.wallEdge if i == line.size() - 1 else 0.0)
 		if p.job in ["block", "lead"]:
 			p.target = _pick_block(p)
 
@@ -861,6 +881,7 @@ func _live(dt: float, move: Vector2) -> void:
 				p.down = Tune.v.diveDown
 		elif p.down > 0 and phase == "live":
 			p.down = maxf(0.0, p.down - dt)
+	_move = move
 	if controlled != null and move.length() > 0.05:
 		controlled.took = true
 	_handoff()
@@ -993,11 +1014,13 @@ func _qb_brain(p: P) -> Vector2:
 		_ai_read(at_depth)
 	if carrier != qb:
 		return Vector2.ZERO
-	# Step away from the closest rusher.
+	# Shuffle away from the closest rusher, staying in the pocket.
 	var threat: P = _nearest(p, 1 - p.team, true)
-	if threat != null and threat.at.distance_to(p.at) < 3.0 and threat.engaged == null:
-		var away := (p.at - threat.at).normalized()
-		return Vector2(away.x * 0.3, away.y).normalized() * _speed(p) * 0.6
+	if (at_depth or t > 1.2) and threat != null and threat.at.distance_to(p.at) < 3.0 and threat.engaged == null:
+		var side := signf(p.at.y - threat.at.y)
+		if side == 0:
+			side = 1.0
+		return Vector2(0, side) * _speed(p) * 0.3
 	return _seek(p, drop, 0.9)
 
 
@@ -1030,6 +1053,13 @@ func _ai_read(at_depth: bool) -> void:
 	for o: P in players:
 		if o.team != poss and o.engaged == null and o.at.distance_to(qb.at) < 2.6:
 			pressure = true
+	if pressure and t > 0.8 and (best == null or best_open < 1.5):
+		# Nobody open and a rusher in his face: throw it away.
+		var side := 1.0 if qb.at.y > MID_Y else -1.0
+		var away := Vector2(qb.at.x + d * 6.0, MID_Y + side * (FIELD_W / 2 + 4.0))
+		if away.distance_to(qb.at) <= max_throw() and rng.randf() < 0.6:
+			_throw(away, null)
+		return
 	if best == null:
 		return
 	if (best_open >= Tune.v.aiThrowOpen and (at_depth or t > 1.6)) or t > Tune.v.aiThrowBy or (pressure and t > 1.0 and best_open > 1.5):
@@ -1057,6 +1087,8 @@ func _follow(p: P) -> Vector2:
 
 
 func _block_brain(p: P) -> Vector2:
+	if p.wall:
+		return _wall_brain(p)
 	if p.target == null or p.target.down > 0 or (p.target.engaged != null and p.target.engaged != p) or p.think <= 0:
 		p.think = 0.4
 		if p.target == null or p.target.down > 0 or (p.target.engaged != null and p.target.engaged != p):
@@ -1068,6 +1100,35 @@ func _block_brain(p: P) -> Vector2:
 	# Get between him and the ball.
 	var spot := tg.at + (protect - tg.at).normalized() * 0.7
 	return _seek(p, spot, 1.0 if p.role != "OL" else 0.9, 0.3)
+
+
+## Where the wall's front line is for this lineman: a step back to set the
+## pocket on a pass, a step forward on a run.
+func wall_x(p: P) -> float:
+	var d: int = dir[poss]
+	var s := clampf(t / 0.4, 0.0, 1.0)
+	var step: float = -Tune.v.wallSet if off_call.get("kind", "") == "pass" else 0.4
+	return p.home.x + d * (step * s) - d * p.give
+
+
+## A lineman holds his square: he stays on the wall line and slides across
+## only as far as the edge of his square to square up with his man.
+func _wall_brain(p: P) -> Vector2:
+	var d: int = dir[poss]
+	var sq: float = Tune.v.wallSquare
+	var want_y := p.home.y
+	var best := 4.0
+	for o: P in players:
+		if o.team == p.team or o.down > 0:
+			continue
+		var ahead := (o.at.x - p.at.x) * d
+		if ahead < -0.5 or ahead > 4.0 or o.at.y < p.lo - 1.2 or o.at.y > p.hi + 1.2:
+			continue
+		var dd := o.at.distance_to(p.at)
+		if dd < best:
+			best = dd
+			want_y = clampf(o.at.y, p.lo + sq, p.hi - sq)
+	return _seek(p, Vector2(wall_x(p), want_y), 1.0, 0.25)
 
 
 func _pick_block_for(p: P) -> P:
@@ -1234,6 +1295,8 @@ func _blocks(dt: float) -> void:
 			continue
 		if p.job not in ["block", "lead"] and not (p.job == "route" and carrier != null and carrier != qb):
 			continue
+		if p.wall:
+			continue
 		for o: P in players:
 			if o.team == p.team or o.engaged != null or o.free > 0 or o.down > 0 or o.dive > 0:
 				continue
@@ -1248,11 +1311,12 @@ func _blocks(dt: float) -> void:
 				o.shed = maxf(0.25, hold)
 				events.append({type = "block", team = p.team})
 				break
-	# Blocks in progress.
 	var d: int = dir[poss]
+	_wall(dt, bt)
+	# Blocks in progress (backs, tight ends and receivers).
 	for p: P in players:
 		var o := p.engaged
-		if o == null or p.team != poss:
+		if o == null or p.team != poss or p.wall:
 			continue
 		var rate := 1.0
 		var ref := carrier.at if carrier != null else (_ball_ground() if not ball.is_empty() else qb.at)
@@ -1282,6 +1346,96 @@ func _blocks(dt: float) -> void:
 		o.vel = push
 		p.face = 1 if (o.at.x - p.at.x) > 0 else -1
 		o.face = -p.face
+
+
+## The wall: each lineman takes the man who comes into his square. A
+## defender can't walk through the wall; he has to drive his blocker back
+## (`give`) until there's room to get around him. Stronger rushers push
+## faster, a lineman with a free neighbor gets a double team, and on runs
+## the line drives the defense back instead.
+func _wall(dt: float, bt: int) -> void:
+	var d: int = dir[poss]
+	var sq: float = Tune.v.wallSquare
+	var wall := players.filter(func(p): return p.team == poss and p.wall and p.down <= 0)
+	var pocket: bool = carrier == qb and off_call.get("kind", "") == "pass" and not past_los
+	# New blocks: a defender in front of a lineman's square.
+	for p: P in wall:
+		if p.engaged != null or p.stun > 0 or bt != poss:
+			continue
+		for o: P in players:
+			if o.team == p.team or o.engaged != null or o.free > 0 or o.down > 0 or o.dive > 0:
+				continue
+			var ahead := (o.at.x - p.at.x) * d
+			if ahead > -0.3 and ahead < Tune.v.wallGap + 0.45 and absf(o.at.y - p.at.y) < sq + 0.35 and o.at.y > p.lo - 0.35 and o.at.y < p.hi + 0.35:
+				p.engaged = o
+				o.engaged = p
+				o.vel = Vector2.ZERO
+				p.vel = Vector2.ZERO
+				events.append({type = "block", team = p.team})
+				break
+	# Blocks in progress.
+	for p: P in wall:
+		var o := p.engaged
+		if o == null:
+			continue
+		if o.engaged != p:
+			p.engaged = null
+			continue
+		if bt != poss or o.down > 0:
+			o.engaged = null
+			p.engaged = null
+			continue
+		var helpers := 0
+		for q: P in wall:
+			if q != p and q.engaged == null and q.stun <= 0 and absf(q.at.y - p.at.y) < 1.8:
+				helpers += 1
+		var power: float = (o.pwr - p.pwr) * Tune.v.wallPower - helpers * Tune.v.wallHelp
+		var rate: float = (Tune.v.wallPush if pocket else Tune.v.wallRunPush) + power
+		var slide := 0.0
+		if o == controlled and o.took:
+			# You drive him back by pushing toward the ball, and slide by pushing across.
+			var to_ball := Vector2(-d, 0)
+			rate *= 0.6 + maxf(0.0, _move.dot(to_ball)) * 0.8
+			slide = _move.y * Tune.v.wallSlip
+		elif carrier != null and absf(carrier.at.y - o.at.y) > 1.5 and not pocket:
+			# Fight across toward the runner.
+			slide = signf(carrier.at.y - o.at.y) * Tune.v.wallSlip * 0.5
+		p.give = clampf(p.give + rate * dt, -1.5, 6.0)
+		# The lineman mirrors him, but only to the edge of his square.
+		o.at.y += slide * dt
+		p.at = Vector2(wall_x(p), move_toward(p.at.y, clampf(o.at.y, p.lo + sq, p.hi - sq), (1.2 + p.spd * 2.0) * dt))
+		p.vel = Vector2(-d * rate, 0)
+		var off_y := o.at.y - p.at.y
+		o.at = Vector2(p.at.x + d * Tune.v.wallGap, o.at.y)
+		o.vel = p.vel
+		p.face = d
+		o.face = -d
+		# Room to get around him: pushed back far enough, slid off the
+		# edge of his square, or the ball carrier right there.
+		var around: bool = p.give >= Tune.v.wallGive or o.at.y < p.lo - 0.45 or o.at.y > p.hi + 0.45
+		var near_ball := carrier != null and carrier != qb and o.at.distance_to(carrier.at) < 1.8
+		if near_ball and rng.randf() < dt * (1.0 + (o.pwr - p.pwr) * 2.0):
+			around = true
+		if around:
+			var side := signf(off_y) if absf(off_y) > 0.05 else (1.0 if rng.randf() < 0.5 else -1.0)
+			o.engaged = null
+			p.engaged = null
+			o.free = 1.0
+			o.at += Vector2(-d * 0.4, side * (sq + 0.4))
+			p.stun = 0.4
+			p.give = maxf(p.give, Tune.v.wallGive * 0.5)
+	# Nobody walks through the wall: a defender who hasn't beaten his man is
+	# held at its front.
+	for o: P in players:
+		if o.team == poss or o.engaged != null or o.free > 0 or o.down > 0 or o.dive > 0:
+			continue
+		for p: P in wall:
+			if p.stun > 0:
+				continue
+			var ahead := (o.at.x - p.at.x) * d
+			if absf(o.at.y - p.at.y) < sq and ahead < Tune.v.wallGap - 0.1 and ahead > -1.0:
+				o.at.x = p.at.x + d * (Tune.v.wallGap - 0.1)
+				o.vel.x = 0.0
 
 
 func _separate() -> void:

@@ -26,6 +26,7 @@ func _init() -> void:
 	test_hike_and_throw()
 	test_dive_tackle()
 	test_juke()
+	test_wall()
 	test_downs()
 	test_kicks()
 	test_quarter_keeps_kickoff()
@@ -176,8 +177,12 @@ func test_dive_tackle() -> void:
 		if h.carrier == null:
 			continue
 		var cc = h.carrier
+		if h.controlled.engaged != null:
+			h.controlled.engaged.engaged = null
 		h.controlled.engaged = null
-		h.controlled.at = cc.at - Vector2(1.0, 0)
+		# A yard away in his path, diving at him.
+		var ahead: Vector2 = cc.vel.normalized() if cc.vel.length() > 0.5 else Vector2(h.dir[h.poss], 0)
+		h.controlled.at = cc.at + ahead * 1.0
 		h.flick(cc.at - h.controlled.at)
 		for j in 30:
 			h.step(1.0 / 120.0)
@@ -219,6 +224,61 @@ func test_juke() -> void:
 			if h.phase == "dead":
 				made[juking] += 1
 	check(made[1] < made[0], "jukes break tackles (%d tackles without, %d with)" % made)
+
+
+## Seconds until a computer rusher of the given power gets around his
+## lineman while you hold the ball in the pocket.
+func wall_time(power: float, seed_value: int) -> float:
+	var g := user_offense(30.0, "slants", seed_value)
+	var dl = g.players.filter(func(p): return p.team == 1 and p.slot == "DL2")[0]
+	dl.pwr = power
+	g.hike()
+	# Just the line, the quarterback and this rusher.
+	for p in g.players:
+		if p != dl and p != g.qb and p.role != "OL":
+			p.down = 9999.0
+			p.job = "out"
+	for i in 900:
+		g.step(1.0 / 120.0)
+		g.events.clear()
+		if dl.free > 0 or dl.act == "tackler":
+			return g.t
+		if g.phase != "live":
+			break
+	return 99.0
+
+
+func test_wall() -> void:
+	var g := user_offense(30.0, "slants")
+	g.hike()
+	step_until(g, func(): return g.t > 0.5, 2.0)
+	var line := g.players.filter(func(p): return p.team == 0 and p.role == "OL")
+	check(line.all(func(p): return p.wall), "the offensive line forms the wall")
+	var engaged := line.filter(func(p): return p.engaged != null).size()
+	check(engaged >= 3, "the wall picks up the rushers (%d blocking)" % engaged)
+	# A defender can't walk through the wall: he has to push his man back.
+	var strong := 0.0
+	var weak := 0.0
+	for i in 4:
+		strong += wall_time(0.95, 500 + i)
+		weak += wall_time(0.35, 500 + i)
+	print("wall: a strong rusher gets around in %.1f s, a weak one in %.1f s (99 = never)" % [strong / 4, weak / 4])
+	check(strong < 20.0, "a strong rusher gets around (%.1f s avg)" % (strong / 4))
+	check(strong < weak, "stronger rushers push the wall back faster (%.1f s vs %.1f s)" % [strong / 4, weak / 4])
+	# You at defensive tackle, pushing straight at the quarterback.
+	var h := user_defense(30.0, "base", 77)
+	var dl = h.players.filter(func(p): return p.team == 0 and p.slot == "DL2")[0]
+	h.select_at(dl.at)
+	dl.took = true
+	h._snap()
+	for i in 60:
+		h.step(1.0 / 120.0, Vector2(-h.dir[h.poss], 0))
+		h.events.clear()
+	var blocker = dl.engaged
+	check(blocker != null and blocker.role == "OL", "a lineman takes the rusher in his square")
+	if blocker != null:
+		var depth: float = (dl.at.x - blocker.at.x) * h.dir[h.poss]
+		check(depth > 0.5, "the rusher is held in front of the wall (%.2f yd)" % depth)
 
 
 func test_downs() -> void:

@@ -62,6 +62,19 @@ the two halves.
 | Switch defender | Tab |
 | Pause | P or Esc |
 
+### The offensive line: a wall
+
+The five offensive linemen block as a wall. Each one holds a square of it,
+crouched low, and slides across only as far as the edge of his square to
+stay in front of his man (the tackles at the ends reach a little farther
+outside for the edge rushers). Nobody walks through the wall: a defensive
+lineman has to drive his blocker back toward the quarterback until there's
+room to get around him. Stronger rushers push faster, a lineman with a free
+neighbor gets help (a double team), and on running plays the line drives the
+defense back instead. Playing a defensive lineman yourself, push toward the
+ball to drive your man back, or across to slip off the edge of his square.
+Every number for it is a developer setting (Players → Wall).
+
 ### Rules
 
 Four downs to gain ten yards. Quarters are 4 minutes of game clock by

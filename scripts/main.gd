@@ -75,7 +75,7 @@ func _shot(spec: String) -> void:
 			await _wait(0.6)
 			if what == "live":
 				g.hike()
-				await _wait(1.6)
+				await _wait(1.0)
 			elif what == "input":
 				var ok := await _input_check()
 				print("INPUT CHECK -> ", "ok" if ok else "FAILED")
