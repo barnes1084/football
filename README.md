@@ -127,7 +127,14 @@ by `tools/make_audio.py`.
 
 **SETTINGS** on the title screen and the pause menu has the player
 settings: difficulty, quarter length, volumes, vibration, screen shake,
-swapping the sides, the move stick's size, defender switching and the zoom.
+swapping the sides, the move stick's size, defender switching and the
+field view:
+
+- **Whole field** (the default): zoomed out so both sidelines are always in
+  view, like the old 8-bit games. The camera only scrolls along the field.
+  The player size for this view is its own setting.
+- **Zoomed in**: closer, and the camera follows the ball both ways.
+  **Yards across the screen** sets how close.
 
 ### Developer settings
 

@@ -33,8 +33,11 @@ const ITEMS := [
 	{key = "aimDots", label = "Throw preview dots", min = 0, max = 40, step = 1, def = 14, note = "0 = no preview"},
 	{key = "flickMin", label = "Flick length for a juke or dive", min = 5, max = 80, step = 1, def = 18, unit = "px"},
 	{key = "autoSwitch", label = "Switch to the defender nearest the ball", type = "choice", def = "throw", options = {"never": "Never", "throw": "When the ball is thrown", "always": "On every catch or handoff too"}},
-	{key = "fieldZoom", label = "Yards across the screen", min = 18, max = 60, step = 1, def = 34, unit = "yd"},
-	{key = "playerScale", label = "Player size", min = 0.3, max = 1.5, step = 0.01, def = 0.62, unit = "×"},
+	{key = "fieldView", label = "Field view", type = "choice", def = "sidelines", options = {"sidelines": "Whole field (both sidelines)", "zoom": "Zoomed in"}, note = "whole field: zoomed out to show the field from sideline to sideline"},
+	{key = "fieldZoom", label = "Zoomed in: yards across the screen", min = 18, max = 60, step = 1, def = 34, unit = "yd"},
+	{key = "fieldTilt", label = "Field tilt", min = 0.35, max = 1, step = 0.01, def = 0.55, note = "how flat the field looks: lower is flatter (and fits more when zoomed out)"},
+	{key = "playerScale", label = "Player size (zoomed in)", min = 0.3, max = 1.5, step = 0.01, def = 0.62, unit = "×"},
+	{key = "playerScaleWide", label = "Player size (whole field)", min = 0.3, max = 2, step = 0.01, def = 0.85, unit = "×", note = "players drawn bigger than life, like the old games"},
 	{group = "PLAYERS"},
 	{key = "runSpeed", label = "Run speed", min = 0.4, max = 2, step = 0.05, def = 1, unit = "×", note = "everyone"},
 	{key = "accel", label = "Acceleration", min = 4, max = 60, step = 1, def = 20, unit = "yd/s²"},
@@ -87,7 +90,7 @@ const ITEMS := [
 ## always on in the sideload APK (export feature "dev_build"), never in the
 ## store builds ("play_store", "app_store"), and toggled by tapping the title 7 times
 ## anywhere else (the editor, desktop).
-const PLAYER_KEYS := ["difficulty", "quarterMinutes", "sfxVolume", "musicVolume", "crowdVolume", "vibrate", "shake", "swapSides", "stickSize", "autoSwitch", "fieldZoom"]
+const PLAYER_KEYS := ["difficulty", "quarterMinutes", "sfxVolume", "musicVolume", "crowdVolume", "vibrate", "shake", "swapSides", "stickSize", "autoSwitch", "fieldView", "fieldZoom"]
 
 ## Developer mode: every setting is shown and saved changes to them apply.
 static var dev := false

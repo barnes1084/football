@@ -4,7 +4,6 @@
 class_name Field
 extends Node2D
 
-const SQ := 0.55  ## how flat the field looks (depth squash)
 const POSES_RUN := ["run1", "run2", "run3", "run4", "run5"]
 const POSES_CARRY := ["carry1", "burst", "carry2", "burst"]
 const SHADER := """
@@ -34,6 +33,13 @@ static var _tex := {}
 var g: Game
 var view := Vector2(1920, 1080)
 var k := 56.0
+## How flat the field looks (depth squash): from the setting.
+var sq := 0.55
+## Room at the top of the screen kept for the scoreboard, in pixels.
+const TOP_PX := 140.0
+const BOTTOM_PX := 16.0
+## How much past each sideline the whole-field view shows, in yards.
+const SIDE_MARGIN := 2.5
 var cam := Vector2(50, 26.67)
 var aim = null  ## {from, to, rec, raw} while the person aims a throw
 var shake := 0.0
@@ -97,20 +103,34 @@ func set_game(game: Game) -> void:
 
 func layout() -> void:
 	view = get_viewport_rect().size
-	k = view.x / Tune.v.fieldZoom
+	sq = Tune.v.fieldTilt
+	if whole_field():
+		# Zoom out until both sidelines fit under the scoreboard.
+		k = (view.y - TOP_PX - BOTTOM_PX) / ((Game.FIELD_W + SIDE_MARGIN * 2) * sq)
+	else:
+		k = view.x / Tune.v.fieldZoom
+
+
+## How big the players are drawn, for the current view.
+static func player_scale() -> float:
+	return Tune.v.playerScaleWide if Tune.v.fieldView == "sidelines" else Tune.v.playerScale
+
+
+func whole_field() -> bool:
+	return Tune.v.fieldView == "sidelines"
 
 
 func P(x: float, y: float, z := 0.0) -> Vector2:
-	return Vector2((x - cam.x) * k + view.x / 2, (y - cam.y) * k * SQ + view.y / 2 - z * k * 0.75)
+	return Vector2((x - cam.x) * k + view.x / 2, (y - cam.y) * k * sq + view.y / 2 - z * k * 0.75)
 
 
 func to_field(s: Vector2) -> Vector2:
-	return Vector2((s.x - view.x / 2) / k + cam.x, (s.y - view.y / 2) / (k * SQ) + cam.y)
+	return Vector2((s.x - view.x / 2) / k + cam.x, (s.y - view.y / 2) / (k * sq) + cam.y)
 
 
 ## A screen-space drag as a field direction (undoing the depth squash).
 func drag_to_field(d: Vector2) -> Vector2:
-	return Vector2(d.x, d.y / SQ) / k
+	return Vector2(d.x, d.y / sq) / k
 
 
 # ---------- Every frame ----------
@@ -147,10 +167,16 @@ func _focus() -> Vector2:
 func _follow(dt: float) -> void:
 	var want := _focus()
 	var half_w := view.x / 2 / k
-	var half_h := view.y / 2 / (k * SQ)
+	var half_h := view.y / 2 / (k * sq)
 	want.x = clampf(want.x, -13.0 + half_w, 113.0 - half_w)
-	want.y = clampf(want.y, -9.0 + half_h, Game.FIELD_W + 4.0 - half_h) if half_h * 2 < Game.FIELD_W + 13 else Game.FIELD_W / 2 - 2.5
+	if whole_field():
+		# Both sidelines always in view: only scroll along the field.
+		want.y = -SIDE_MARGIN + (view.y / 2 - TOP_PX) / (k * sq)
+	else:
+		want.y = clampf(want.y, -9.0 + half_h, Game.FIELD_W + 4.0 - half_h) if half_h * 2 < Game.FIELD_W + 13 else Game.FIELD_W / 2 - 2.5
 	cam = cam.lerp(want, clampf(dt * 4.0, 0.0, 1.0))
+	if whole_field():
+		cam.y = want.y
 
 
 func _sync_players() -> void:
@@ -173,7 +199,7 @@ func _sync_players() -> void:
 			s.material = mat
 			actors.add_child(s)
 			sprites[p] = s
-	var sc: float = Tune.v.playerScale * k / 56.5
+	var sc: float = player_scale() * k / 56.5
 	for p in g.players:
 		var s: Sprite2D = sprites[p]
 		var pose := pose_for(p)
@@ -340,7 +366,7 @@ class Ground:
 			var pts := PackedVector2Array()
 			for j in 40:
 				var an := TAU * j / 40
-				pts.append(mid + Vector2(cos(an) * r, sin(an) * r * Field.SQ))
+				pts.append(mid + Vector2(cos(an) * r, sin(an) * r * f.sq))
 			draw_colored_polygon(pts, Color(1, 1, 1, 0.12))
 			f.text(self, "NORTH", mid, int(k * 1.1), Color(1, 1, 1, 0.5), 0)
 		# Line of scrimmage and the first-down line, before the snap.
@@ -359,7 +385,7 @@ class Ground:
 		var s: String = team.name.to_upper()
 		var size := int(k * 2.6)
 		var w: float = f.font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-		var max_w: float = Game.FIELD_W * k * Field.SQ * 0.85
+		var max_w: float = Game.FIELD_W * k * f.sq * 0.85
 		if w > max_w:
 			size = int(size * max_w / w)
 			w = max_w
@@ -401,7 +427,7 @@ class Shadows:
 			var c: Vector2 = f.P(p.at.x, p.at.y)
 			if p == g.controlled:
 				var col := Color("#ffe03c")
-				var r := Vector2(k * 0.95, k * 0.95 * Field.SQ)
+				var r := Vector2(k * 0.95, k * 0.95 * f.sq)
 				var pts := PackedVector2Array()
 				for i in 33:
 					var a := TAU * i / 32
@@ -430,7 +456,7 @@ class Shadows:
 			var pts := PackedVector2Array()
 			for i in 33:
 				var an := TAU * i / 32
-				pts.append(rc + Vector2(cos(an) * k * 0.8, sin(an) * k * 0.8 * Field.SQ))
+				pts.append(rc + Vector2(cos(an) * k * 0.8, sin(an) * k * 0.8 * f.sq))
 			draw_polyline(pts, col, maxf(3.0, k * 0.08))
 
 	func _ellipse(c: Vector2, r: Vector2, col: Color) -> void:
@@ -474,11 +500,11 @@ class Overlay:
 		var c = g.controlled
 		if c != null and g.phase in ["presnap", "live"]:
 			var m := Field.meta("stand")
-			var head: Vector2 = f.P(c.at.x, c.at.y) - Vector2(0, (m.foot[1] - m.top) * Tune.v.playerScale * k / 56.5 + k * 0.5)
-			var s := k * 0.35
+			var head: Vector2 = f.P(c.at.x, c.at.y) - Vector2(0, (m.foot[1] - m.top) * Field.player_scale() * k / 56.5 + k * 0.5)
+			var s := maxf(k * 0.35, 12.0)
 			draw_colored_polygon(PackedVector2Array([head + Vector2(-s, -s), head + Vector2(s, -s), head + Vector2(0, s * 0.4)]), Color("#ffe03c"))
-			f.text(self, str(c.num), head - Vector2(0, s * 1.6), int(k * 0.55), Color.WHITE, 6)
+			f.text(self, str(c.num), head - Vector2(0, maxf(s, 12.0) * 1.6), maxi(22, int(k * 0.55)), Color.WHITE, 6)
 		# Receivers' numbers while you aim.
 		if f.aim != null and f.aim.rec != null:
 			var r = f.aim.rec
-			f.text(self, str(r.num), f.P(r.at.x, r.at.y) - Vector2(0, k * 2.8), int(k * 0.55), Color("#40ff70"), 6)
+			f.text(self, str(r.num), f.P(r.at.x, r.at.y) - Vector2(0, k * 2.8), maxi(22, int(k * 0.55)), Color("#40ff70"), 6)
