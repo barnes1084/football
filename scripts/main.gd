@@ -144,18 +144,18 @@ func _input_check() -> bool:
 		drag_ev.call(1, st + Vector2(0, -12.0 * (i + 1)))
 		await get_tree().process_frame
 	var y0 := g.qb.at.y
-	await _wait(0.5)
+	await _wait(0.3)
 	var moved := absf(g.qb.at.y - y0) > 0.3
 	touch_ev.call(1, st + Vector2(0, -72), false)
-	await _wait(0.2)
+	await get_tree().process_frame
 	var can := g.can_throw()
 	# Pull back on the left and let go: a throw downfield.
 	var a := Vector2(vs.x * 0.3, vs.y * 0.5)
 	touch_ev.call(0, a, true)
 	await get_tree().process_frame
 	var pull := Vector2(-g.dir[g.poss] * vs.y * 0.18, 0)
-	for i in 8:
-		drag_ev.call(0, a + pull * (i + 1) / 8.0)
+	for i in 4:
+		drag_ev.call(0, a + pull * (i + 1) / 4.0)
 		await get_tree().process_frame
 	var aimed := field.aim != null
 	touch_ev.call(0, a + pull, false)
