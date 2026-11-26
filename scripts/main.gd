@@ -87,6 +87,32 @@ func _shot(spec: String) -> void:
 			g.give_ball(0, 35.0)
 			_choose_defense("base")
 			await _wait(4.5)
+		"call_settings":
+			# SETTINGS from the play call menu, then back to the play call.
+			_start_game(5, "balanced", 3, "strong_d", false, 0)
+			g.give_ball(0, 25.0)
+			await _run_until(func(): return _shown_call != "", 5.0)
+			var shown := _shown_call
+			_open_settings(func(): pass)
+			await _wait(0.3)
+			var opened := settings.visible
+			settings.close()
+			await _wait(0.3)
+			print("CALL SETTINGS shown=%s opened=%s back=%s" % [shown, opened, _shown_call])
+			pause()
+			await _wait(0.2)
+			var paused := screen == "paused"
+			resume()
+			await _wait(0.3)
+			print("CALL PAUSE paused=%s back=%s" % [paused, _shown_call])
+		"carrier":
+			# The computer runs it: the red ring follows the ball carrier.
+			_start_game(5, "balanced", 3, "strong_d", false, 1)
+			g.give_ball(0, 35.0)
+			g.off_call = Playbook.play("power_r")
+			_choose_defense("base")
+			await _run_until(func(): return g.handed, 8.0)
+			await _wait(0.4)
 		"teams":
 			_pick_team(false)
 		"types":
@@ -585,9 +611,13 @@ func _show_call(kind: String) -> void:
 	var score := UI.label("%s %d · %s %d · %s %s" % [g.teams[0].abbr, g.score[0], g.teams[1].abbr, g.score[1], g.quarter_text(), g.time_text()], 24, UI.PALE)
 	score.autowrap_mode = TextServer.AUTOWRAP_OFF
 	row.add_child(score)
-	var to := UI.button("TIME OUT", pause)
-	to.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(to)
+	var pause_btn := UI.button("PAUSE", pause)
+	pause_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(pause_btn)
+	# Settings, then straight back to picking the play.
+	var set_btn := UI.button("SETTINGS", func(): _open_settings(func(): pass))
+	set_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(set_btn)
 	box.add_child(row)
 
 

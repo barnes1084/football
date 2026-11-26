@@ -13,7 +13,8 @@ season. Everyone plays everyone once, and the top two meet in the
 
 ### Calling plays
 
-Before every snap you pick a play from a grid of cards with diagrams.
+Before every snap you pick a play from a grid of cards with diagrams. The
+play call screen also has PAUSE and SETTINGS.
 
 - **Offense**: eight runs (HB Dive, Power Left/Right, Sweep Left/Right,
   Counter, Draw, QB Sneak), eight passes (Slants, Curl Flat, Quick Outs, Post
@@ -49,6 +50,9 @@ sometimes goes for it.
   miss, you're on the ground for a moment.
 - When the ball is thrown, you switch to the defender nearest to where it's
   going. You can change that in the settings.
+- Your player has a yellow ring. Whoever has the ball for the computer gets
+  a pulsing red ring, so you can follow it through a handoff, a catch or an
+  interception return.
 
 Left-handed? **Settings → Throw / juke / tackle with the right side** swaps
 the two halves.

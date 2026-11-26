@@ -431,13 +431,13 @@ class Shadows:
 		for p in g.players:
 			var c: Vector2 = f.P(p.at.x, p.at.y)
 			if p == g.controlled:
-				var col := Color("#ffe03c")
-				var r := Vector2(k * 0.95, k * 0.95 * f.sq)
-				var pts := PackedVector2Array()
-				for i in 33:
-					var a := TAU * i / 32
-					pts.append(c + Vector2(cos(a) * r.x, sin(a) * r.y))
-				draw_polyline(pts, col, maxf(3.0, k * 0.1))
+				_ring(c, k * 0.95, Color("#ffe03c"), maxf(3.0, k * 0.1))
+			# Whoever has the ball, when he isn't yours: a pulsing red ring, so
+			# you can follow it through a handoff, a catch or an interception.
+			if p == g.carrier and p != g.controlled and g.phase in ["live", "dead"]:
+				var pulse := 1.0 + 0.1 * sin(Time.get_ticks_msec() / 90.0)
+				_ellipse(c, Vector2(k * 1.1, k * 1.1 * f.sq) * pulse, Color(1, 0.23, 0.19, 0.25))
+				_ring(c, k * 1.1 * pulse, Color("#ff3b30"), maxf(5.0, k * 0.16))
 			_ellipse(c, Vector2(k * 0.55, k * 0.22), Color(0, 0, 0, 0.28))
 		# The ball's shadow.
 		var b := g.ball_pos()
@@ -463,6 +463,13 @@ class Shadows:
 				var an := TAU * i / 32
 				pts.append(rc + Vector2(cos(an) * k * 0.8, sin(an) * k * 0.8 * f.sq))
 			draw_polyline(pts, col, maxf(3.0, k * 0.08))
+
+	func _ring(c: Vector2, r: float, col: Color, w: float) -> void:
+		var pts := PackedVector2Array()
+		for i in 33:
+			var a := TAU * i / 32
+			pts.append(c + Vector2(cos(a) * r, sin(a) * r * f.sq))
+		draw_polyline(pts, col, w)
 
 	func _ellipse(c: Vector2, r: Vector2, col: Color) -> void:
 		var pts := PackedVector2Array()
