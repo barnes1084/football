@@ -104,7 +104,10 @@ func set_game(game: Game) -> void:
 func layout() -> void:
 	view = get_viewport_rect().size
 	sq = Tune.v.fieldTilt
-	if whole_field():
+	if g != null and g.drill:
+		# The line drill: up close.
+		k = view.x / 16.0
+	elif whole_field():
 		# Zoom out until both sidelines fit under the scoreboard.
 		k = (view.y - TOP_PX - BOTTOM_PX) / ((Game.FIELD_W + SIDE_MARGIN * 2) * sq)
 	else:
@@ -117,7 +120,7 @@ static func player_scale() -> float:
 
 
 func whole_field() -> bool:
-	return Tune.v.fieldView == "sidelines"
+	return Tune.v.fieldView == "sidelines" and not (g != null and g.drill)
 
 
 func P(x: float, y: float, z := 0.0) -> Vector2:
@@ -151,6 +154,8 @@ func _process(dt: float) -> void:
 
 
 func _focus() -> Vector2:
+	if g.drill:
+		return Vector2(g.los_x() - g.dir[g.poss] * 2.5, g.ball_y)
 	match g.phase:
 		"presnap", "call":
 			return Vector2(g.los_x() + g.dir[g.poss] * 4.0, g.ball_y)
@@ -237,7 +242,7 @@ func pose_for(p) -> String:
 			return POSES_RUN[cyc % 5]
 		match p.role:
 			"OL", "DL":
-				return "stance" if p.id % 2 == 0 else "stance2"
+				return "stance" if p.id % 2 == 0 or g.drill else "stance2"
 			"QB":
 				return "hold"
 			"RB", "FB":
@@ -267,7 +272,8 @@ func pose_for(p) -> String:
 		var push := int(Time.get_ticks_msec() / 220 + p.id) % 2 == 0
 		if p.team == g.poss:
 			return "push1" if push else "push2"
-		return "block" if push else "push1"
+		# Driving into his man: low, leaning in, fists out.
+		return "lunge" if push else "block"
 	if p == g.carrier:
 		if p == g.qb and g.aiming and g.can_throw():
 			return "windup2" if p.act_t < 0 else "windup"
@@ -497,6 +503,16 @@ class Overlay:
 			draw_line(f.P(gx, Game.MID_Y - 3.08, 3.3), f.P(gx, Game.MID_Y + 3.08, 3.3), yel, w)
 			for py in [Game.MID_Y - 3.08, Game.MID_Y + 3.08]:
 				draw_line(f.P(gx, py, 3.3), f.P(gx, py, 11.0), yel, w)
+		# The line drill: where the quarterback would be.
+		if g.drill and g.qb != null:
+			var qc: Vector2 = f.P(g.qb.at.x, g.qb.at.y)
+			var rr := k * 0.9
+			var pts := PackedVector2Array()
+			for i in 33:
+				var an := TAU * i / 32
+				pts.append(qc + Vector2(cos(an) * rr, sin(an) * rr * f.sq))
+			draw_polyline(pts, Color(1, 1, 1, 0.8), 4)
+			f.text(self, "QB", qc, int(k * 0.6), Color.WHITE, 6)
 		# The ball, when it's not in someone's hands.
 		var b := g.ball_pos()
 		var in_hands := g.carrier != null and g.phase in ["live", "dead"]
@@ -510,7 +526,7 @@ class Overlay:
 			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
 		# A marker over your player.
 		var c = g.controlled
-		if c != null and g.phase in ["presnap", "live"]:
+		if c != null and g.phase in ["presnap", "live"] and not g.drill:
 			var m := Field.meta("stand")
 			var head: Vector2 = f.P(c.at.x, c.at.y) - Vector2(0, (m.foot[1] - m.top) * Field.player_scale() * k / 56.5 + k * 0.5)
 			var s := maxf(k * 0.35, 12.0)

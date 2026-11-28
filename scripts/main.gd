@@ -87,6 +87,11 @@ func _shot(spec: String) -> void:
 			g.give_ball(0, 35.0)
 			_choose_defense("base")
 			await _wait(4.5)
+		"drill", "drill_watch":
+			_start_drill(what == "drill")
+			await _wait(0.5)
+			g.drill_snap()
+			await _wait(1.2)
 		"call_settings":
 			# SETTINGS from the play call menu, then back to the play call.
 			_start_game(5, "balanced", 3, "strong_d", false, 0)
@@ -297,6 +302,7 @@ func show_title() -> void:
 	else:
 		box.add_child(UI.button("NEW SEASON", func(): _pick_team(false), "big"))
 	box.add_child(UI.button("QUICK GAME", func(): _pick_team(true)))
+	box.add_child(UI.button("LINE DRILL: ONE ON ONE", func(): _start_drill(true)))
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_child(UI.button("HOW TO PLAY", _how_to))
@@ -549,6 +555,69 @@ func _confirm_forfeit() -> void:
 func resume() -> void:
 	screen = "play"
 	clear_menu()
+	if g != null and g.drill:
+		_drill_bar()
+
+
+# ---------- Line drill ----------
+
+var _drill := {you = true, dl = 0.7, ol = 0.7}
+
+
+## One offensive lineman against one defensive lineman, nobody else: try
+## out the wall. You rush (or watch the computer play both).
+func _start_drill(you_rush: bool) -> void:
+	_drill.you = you_rush
+	season_game = false
+	var game := Game.new(3, "balanced", 5, "balanced", 0, 0)
+	game.start_drill(_drill.you, _drill.dl, _drill.ol)
+	_set_game(game)
+	screen = "play"
+	clear_menu()
+	Sfx.music("game")
+	Sfx.crowd(true)
+	_drill_bar()
+
+
+func _restart_drill() -> void:
+	var log: Array = g.drill_log
+	g.start_drill(_drill.you, _drill.dl, _drill.ol)
+	g.drill_log = log
+	field.set_game(g)
+	clear_menu()
+	_drill_bar()
+
+
+## The drill's controls along the bottom: who rushes, both men's power, exit.
+func _drill_bar() -> void:
+	var bar := HBoxContainer.new()
+	bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	bar.offset_top = -110
+	bar.offset_bottom = -16
+	menu.add_child(bar)
+	var you := UI.button("YOU RUSH" if _drill.you else "WATCH", func():
+		_drill.you = not _drill.you
+		_restart_drill())
+	bar.add_child(you)
+	for side in [["dl", "D-LINE"], ["ol", "O-LINE"]]:
+		var key: String = side[0]
+		bar.add_child(UI.button("−", func():
+			_drill[key] = clampf(_drill[key] - 0.1, 0.1, 1.0)
+			_restart_drill()))
+		var l := _line("%s POWER %d" % [side[1], roundi(_drill[key] * 100)], 26, Color.WHITE)
+		bar.add_child(l)
+		bar.add_child(UI.button("+", func():
+			_drill[key] = clampf(_drill[key] + 0.1, 0.1, 1.0)
+			_restart_drill()))
+	bar.add_child(UI.button("RESET", func():
+		g.drill_log.clear()
+		_restart_drill()))
+	bar.add_child(UI.button("EXIT", show_title))
+	for c in bar.get_children():
+		if c is Button:
+			c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
 
 # ---------- Play calling ----------
@@ -688,7 +757,9 @@ func _release(id: int, pos: Vector2) -> void:
 
 
 func _tap(pos: Vector2) -> void:
-	if g.phase == "presnap" and g.poss == g.user:
+	if g.drill:
+		g.drill_snap()
+	elif g.phase == "presnap" and g.poss == g.user:
 		g.hike()
 	elif g.user >= 0 and g.ball_team() != g.user:
 		g.select_at(field.to_field(pos))
@@ -1046,7 +1117,10 @@ class Hud:
 		pause_btn.visible = main.screen == "play"
 		if g == null or main.screen not in ["play", "paused"]:
 			return
-		_scorebug(g, vs, 1.0)
+		if g.drill:
+			_drill_panel(g, vs)
+		else:
+			_scorebug(g, vs, 1.0)
 		# The banner after a play.
 		var f := UI.font
 		if g.msg != "" and (g.phase in ["dead", "kick", "final"] or g.msg_t < 2.5):
@@ -1054,7 +1128,7 @@ class Hud:
 			if g.sub != "":
 				_center(g.sub, vs.y * 0.3 + 70, 34, Color.WHITE)
 		elif g.phase == "presnap" and g.sub != "":
-			_center(g.sub, vs.y - 90, 32, Color.WHITE)
+			_center(g.sub, vs.y - (170 if g.drill else 90), 30 if g.drill else 32, Color.WHITE)
 		elif g.phase == "live" and g.controlled != null and main.screen == "play":
 			var hint := ""
 			var sides := ["left", "right"] if not Tune.v.swapSides else ["right", "left"]
@@ -1064,7 +1138,10 @@ class Hud:
 				hint = "Flick on the %s side to juke" % sides[0]
 			elif g.controlled.team != g.ball_team():
 				hint = "Flick on the %s side to dive" % sides[0]
-			if hint != "" and g.t < 3.0:
+			if g.drill:
+				hint = "Push toward the QB to drive him back · push up or down to slip off his edge" if g.drill_beat < 0 else "You're around him: get to the QB!"
+				_center(hint, vs.y - 170, 28, Color(1, 1, 1, 0.8))
+			elif hint != "" and g.t < 3.0:
 				_center(hint, vs.y - 80, 28, Color(1, 1, 1, 0.75))
 		if g.flag != "" and g.phase == "dead":
 			# A yellow penalty flag.
@@ -1072,6 +1149,44 @@ class Hud:
 			draw_line(fc + Vector2(-30, 40), fc + Vector2(-30, -30), Color.WHITE, 5)
 			draw_colored_polygon(PackedVector2Array([fc + Vector2(-30, -30), fc + Vector2(30, -20), fc + Vector2(-30, 5)]), Color("#ffe03c"))
 		_draw_stick(vs)
+
+	## The line drill's scoreboard: how far the lineman has been driven back,
+	## the clock, and how the rushes have gone.
+	func _drill_panel(g: Game, vs: Vector2) -> void:
+		var f := UI.font
+		var w := 900.0
+		var x0: float = vs.x / 2 - w / 2 - main.inset_left
+		var y0 := 18.0
+		draw_rect(Rect2(x0, y0, w, 128), Color(0.03, 0.05, 0.1, 0.85))
+		draw_string(f, Vector2(x0 + 24, y0 + 44), "LINE DRILL", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, Color("#ffe03c"))
+		var wins := g.drill_log.filter(func(r): return r.won)
+		var rec := "Rushes %d · got around %d" % [g.drill_log.size(), wins.size()]
+		if wins.size():
+			var avg := 0.0
+			for r in wins:
+				avg += r.t
+			rec += " · avg %.1f s" % (avg / wins.size())
+		draw_string(f, Vector2(x0 + 280, y0 + 44), rec, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color.WHITE)
+		# How far the lineman has been driven back, against how far it takes.
+		var ol := g.drill_ol_player()
+		var give: float = ol.give if ol != null else 0.0
+		var need: float = Tune.v.wallGive
+		var bx := x0 + 24
+		var bw := w - 260
+		draw_string(f, Vector2(bx, y0 + 88), "PUSHED BACK", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, UI.PALE)
+		var mx := bx + 160
+		var mw := bw - 160
+		draw_rect(Rect2(mx, y0 + 70, mw, 24), Color(1, 1, 1, 0.15))
+		var frac := clampf(give / need, 0.0, 1.0)
+		var col := Color("#40ff70") if give < need * 0.6 else (Color("#ffe03c") if give < need else Color("#ff3b30"))
+		if give < 0:
+			# Driven the other way: the lineman is winning.
+			var back := clampf(-give / need, 0.0, 1.0)
+			draw_rect(Rect2(mx, y0 + 70, mw * back * 0.25, 24), Color("#3d7cff"))
+		draw_rect(Rect2(mx, y0 + 70, mw * frac, 24), col)
+		draw_string(f, Vector2(mx + mw + 12, y0 + 90), "%.1f / %.1f yd" % [give, need], HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color.WHITE)
+		var left := Game.DRILL_TIME - g.t if g.phase == "live" else Game.DRILL_TIME
+		draw_string(f, Vector2(x0 + w - 110, y0 + 44), "%.1f s" % maxf(0.0, left), HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color.WHITE)
 
 	func _center(s: String, y: float, size: int, col: Color) -> void:
 		var f := UI.font

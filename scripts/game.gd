@@ -122,6 +122,15 @@ var _next := {}
 var plays := 0
 ## The last play, for the tests and the balance probe.
 var last := {}
+## Line drill: one offensive lineman against one defensive lineman, to try
+## out the wall. `qb` is an unseen spot the rusher is trying to reach.
+var drill := false
+var drill_user := true
+var drill_dl := 0.7
+var drill_ol := 0.7
+var drill_log: Array = []
+var drill_beat := -1.0
+const DRILL_TIME := 6.0
 
 
 func _init(home: int, home_type: String, away: int, away_type: String, user_team := 0, seed_value := 0) -> void:
@@ -771,8 +780,9 @@ func _snap() -> void:
 	line.sort_custom(func(a, b): return a.home.y < b.home.y)
 	for i in line.size():
 		var p: P = line[i]
-		p.lo = p.home.y - Tune.v.wallSquare - (Tune.v.wallEdge if i == 0 else 0.0)
-		p.hi = p.home.y + Tune.v.wallSquare + (Tune.v.wallEdge if i == line.size() - 1 else 0.0)
+		var edge: float = 0.0 if drill else Tune.v.wallEdge
+		p.lo = p.home.y - Tune.v.wallSquare - (edge if i == 0 else 0.0)
+		p.hi = p.home.y + Tune.v.wallSquare + (edge if i == line.size() - 1 else 0.0)
 		if p.job in ["block", "lead"]:
 			p.target = _pick_block(p)
 
@@ -835,6 +845,8 @@ func _presnap(dt: float, move: Vector2) -> void:
 			_offside()
 			return
 	var wait: float = Tune.v.snapDelay if user >= 0 and user != poss else 1.2
+	if drill:
+		wait = 2.5
 	if poss != user and phase_t >= wait:
 		_snap()
 
@@ -843,6 +855,12 @@ func _offside() -> void:
 	flag = "OFFSIDE"
 	events.append({type = "whistle"})
 	events.append({type = "flag"})
+	if drill:
+		_banner("OFFSIDE", "Wait for the snap")
+		phase = "dead"
+		phase_t = 0.0
+		_next = {action = "drill"}
+		return
 	var yards := 5.0
 	if los + yards >= 100.0:
 		yards = (100.0 - los) / 2.0
@@ -884,7 +902,8 @@ func _live(dt: float, move: Vector2) -> void:
 	_move = move
 	if controlled != null and move.length() > 0.05:
 		controlled.took = true
-	_handoff()
+	if not drill:
+		_handoff()
 	# Movement.
 	for p: P in players:
 		if p.down > 0:
@@ -913,6 +932,9 @@ func _live(dt: float, move: Vector2) -> void:
 		_ball_flight()
 		if phase != "live":
 			return
+	if drill:
+		_drill_check()
+		return
 	if carrier != null:
 		if carrier == qb and not past_los and (carrier.at.x - los_x()) * dir[poss] > 0.3:
 			past_los = true
@@ -1716,6 +1738,9 @@ func _advance() -> void:
 	var nx := _next
 	_next = {}
 	var action: String = nx.get("action", "call")
+	if action == "drill":
+		_drill_setup()
+		return
 	if action == "replay":
 		_setup()
 		return
@@ -1881,3 +1906,114 @@ func _kick_step(dt: float) -> void:
 			_banner("NO GOOD!", "%d yards · %s ball at %s" % [roundi(kick.dist), teams[poss].name, spot_text(poss, los)])
 			_next = {action = "call"}
 	kick = {}
+
+
+# ---------- Line drill ----------
+
+## One offensive lineman against one defensive lineman. You play the
+## defensive lineman (or watch the computer do both): drive your man back,
+## or slip off the edge of his square, and get to the quarterback's spot.
+func start_drill(you_rush: bool, dl_power: float, ol_power: float) -> void:
+	drill = true
+	drill_user = you_rush
+	drill_dl = dl_power
+	drill_ol = ol_power
+	user = 0
+	poss = 1
+	dir = [1, -1]
+	los = 40.0
+	down = 1
+	togo = 10.0
+	ball_y = MID_Y
+	clock = 3600.0
+	_drill_setup()
+
+
+func _drill_setup() -> void:
+	phase = "presnap"
+	phase_t = 0.0
+	t = 0.0
+	players.clear()
+	ball = {}
+	kick = {}
+	handed = false
+	past_los = false
+	aiming = false
+	throw_t = -1.0
+	flag = ""
+	drill_beat = -1.0
+	off_call = Playbook.play("slants")
+	def_call = Playbook.defense("base")
+	var d: int = dir[poss]
+	var lx := los_x()
+	var o_r: Dictionary = teams[poss].offense.filter(func(r): return r.role == "OL")[0].duplicate()
+	o_r.pwr = drill_ol
+	var ol := _make_player(poss, {slot = "C", role = "OL"}, o_r, Vector2(lx - 0.6 * d, ball_y))
+	ol.job = "block"
+	var d_r: Dictionary = teams[1 - poss].defense[1].duplicate()
+	d_r.pwr = drill_dl
+	var dl := _make_player(1 - poss, {slot = "DL2", role = "DL"}, d_r, Vector2(lx + 0.9 * d, ball_y))
+	dl.job = "rush"
+	# The quarterback's spot: the target, not drawn as a player.
+	qb = P.new()
+	qb.team = poss
+	qb.role = "QB"
+	qb.id = 99
+	qb.at = Vector2(lx - 6.0 * d, ball_y)
+	carrier = qb
+	controlled = dl if drill_user else null
+	if drill_user:
+		_banner("", "Tap to snap · push toward the QB to drive him back · push up or down to slip off his edge")
+	else:
+		_banner("", "")
+
+
+func drill_snap() -> void:
+	if drill and phase == "presnap":
+		_snap()
+
+
+func drill_ol_player() -> P:
+	for p: P in players:
+		if p.role == "OL":
+			return p
+	return null
+
+
+func drill_dl_player() -> P:
+	for p: P in players:
+		if p.role == "DL":
+			return p
+	return null
+
+
+## The rusher wins by getting around and reaching the quarterback's spot;
+## the lineman wins by holding him off until time runs out.
+func _drill_check() -> void:
+	var dl := drill_dl_player()
+	if dl == null:
+		return
+	if drill_beat < 0 and dl.free > 0:
+		drill_beat = t
+		events.append({type = "miss", team = dl.team})
+	if dl.at.distance_to(qb.at) < Tune.v.tackleReach + 0.3:
+		dl.set_act("tackler")
+		dl.down = 1.0
+		events.append({type = "tackle", team = poss, big = true})
+		drill_log.append({won = true, t = drill_beat if drill_beat >= 0 else t})
+		_drill_end("SACK!", "Got around him in %.1f s" % (drill_beat if drill_beat >= 0 else t))
+	elif t >= DRILL_TIME:
+		drill_log.append({won = false, t = t})
+		_drill_end("STONED!", "He held you for %.0f seconds" % DRILL_TIME)
+
+
+func _drill_end(head: String, s: String) -> void:
+	phase = "dead"
+	phase_t = 0.0
+	events.append({type = "whistle"})
+	_banner(head, s)
+	_next = {action = "drill"}
+	for p: P in players:
+		if p.engaged:
+			p.engaged.engaged = null
+			p.engaged = null

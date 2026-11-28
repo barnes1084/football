@@ -27,6 +27,7 @@ func _init() -> void:
 	test_dive_tackle()
 	test_juke()
 	test_wall()
+	test_drill()
 	test_downs()
 	test_kicks()
 	test_quarter_keeps_kickoff()
@@ -279,6 +280,39 @@ func test_wall() -> void:
 	if blocker != null:
 		var depth: float = (dl.at.x - blocker.at.x) * h.dir[h.poss]
 		check(depth > 0.5, "the rusher is held in front of the wall (%.2f yd)" % depth)
+
+
+## Runs line drill rushes; returns how many the rusher won.
+func drill_wins(dl: float, ol: float, n: int, push := Vector2.ZERO, you := false) -> int:
+	var g := Game.new(3, "balanced", 5, "balanced", 0, 900)
+	g.start_drill(you, dl, ol)
+	var guard := 0
+	while g.drill_log.size() < n and guard < 120 * 20 * n:
+		if g.phase == "presnap":
+			g.drill_snap()
+		g.step(1.0 / 120.0, push if g.phase == "live" else Vector2.ZERO)
+		g.events.clear()
+		guard += 1
+	return g.drill_log.filter(func(r): return r.won).size()
+
+
+func test_drill() -> void:
+	var g := Game.new(3, "balanced", 5, "balanced", 0, 1)
+	g.start_drill(true, 0.7, 0.7)
+	check(g.players.size() == 2, "the line drill has just two players")
+	check(g.players.any(func(p): return p.role == "OL") and g.players.any(func(p): return p.role == "DL"), "one offensive lineman and one defensive lineman")
+	check(g.controlled != null and g.controlled.role == "DL", "you play the defensive lineman")
+	var strong := drill_wins(0.95, 0.4, 6)
+	var weak := drill_wins(0.35, 0.9, 6)
+	check(strong >= 5, "a strong rusher beats a weak lineman (%d of 6)" % strong)
+	check(weak <= 1, "a strong lineman holds off a weak rusher (%d of 6 got around)" % weak)
+	# You, pushing straight at the quarterback's spot, in an even matchup.
+	var gd := Game.new(3, "balanced", 5, "balanced", 0, 1)
+	gd.start_drill(true, 0.7, 0.7)
+	var pushing := drill_wins(0.7, 0.7, 4, Vector2(-gd.dir[gd.poss], 0), true)
+	check(pushing >= 3, "driving straight at him wins an even matchup (%d of 4)" % pushing)
+	var idle := drill_wins(0.7, 0.7, 4, Vector2(0, 0.0), true)
+	check(idle <= pushing, "pushing beats standing still (%d vs %d)" % [pushing, idle])
 
 
 func test_downs() -> void:

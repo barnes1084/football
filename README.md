@@ -79,6 +79,19 @@ defense back instead. Playing a defensive lineman yourself, push toward the
 ball to drive your man back, or across to slip off the edge of his square.
 Every number for it is a developer setting (Players → Wall).
 
+### Line drill (for trying out the wall)
+
+**LINE DRILL: ONE ON ONE** on the title screen puts just two players on the
+field, an offensive lineman and a defensive lineman, with a circle where
+the quarterback stands. Tap to snap. You play the defensive lineman: push
+toward the QB to drive your man back, or up and down to slip off the edge
+of his square. Get around him and reach the QB for a sack, or he holds you
+off for 6 seconds. The bar at the top shows how far he's been driven back
+against how far it takes to get around him. Along the bottom: switch
+between rushing yourself and watching the computer play both men, change
+each man's power, reset the record, or exit. The wall's developer settings
+apply here too.
+
 ### Rules
 
 Four downs to gain ten yards. Quarters are 4 minutes of game clock by
