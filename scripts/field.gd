@@ -269,10 +269,13 @@ func pose_for(p) -> String:
 	if p.act == "stiff" and p.act_t < 0.35:
 		return "stiff"
 	# The wall: linemen block from the low crouch, rocking as they're pushed.
-	if p.wall and phase in ["live", "dead"] and p.vel.length() < 3.0:
+	if p.wall and phase in ["live", "dead"]:
 		if p.engaged != null:
 			# Hands out, punching: the blocking stance.
 			return "passblock"
+		if moving:
+			# Backpedaling into his set: short shuffle steps in the crouch.
+			return "lb" if int(p.dist / 0.35) % 2 == 0 else "lb2"
 		return "lb"
 	if p.engaged != null:
 		var push := int(Time.get_ticks_msec() / 220 + p.id) % 2 == 0

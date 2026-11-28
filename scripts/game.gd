@@ -942,7 +942,10 @@ func _live(dt: float, move: Vector2) -> void:
 			p.vel = p.vel.move_toward(want, Tune.v.accel * dt)
 		p.at += p.vel * dt
 		p.dist += p.vel.length() * dt
-		if absf(p.vel.x) > 0.4:
+		if p.wall:
+			# Linemen in the wall face the defense, even backpedaling.
+			p.face = dir[poss]
+		elif absf(p.vel.x) > 0.4:
 			p.face = 1 if p.vel.x > 0 else -1
 	_blocks(dt)
 	_separate()
@@ -1146,7 +1149,6 @@ func _block_brain(p: P) -> Vector2:
 ## pocket on a pass, a step forward on a run.
 func wall_x(p: P) -> float:
 	var d: int = dir[poss]
-	var s := clampf(t / 0.4, 0.0, 1.0)
 	var step := 0.4
 	if off_call.get("kind", "") == "pass":
 		# Set the pocket, but stay in front of where the quarterback drops to.
@@ -1154,6 +1156,8 @@ func wall_x(p: P) -> float:
 		var qb_depth: float = maxf(float(off_call.get("drop", 5.0)), absf(qb.home.x - lx) if qb != null else 0.0)
 		var line_depth := absf(p.home.x - lx)
 		step = -minf(Tune.v.wallSet, maxf(0.0, qb_depth - 1.5 - line_depth))
+	# Backpedal (or fire out) at a lineman's pace, not all at once.
+	var s := clampf(t * Tune.v.wallSetSpeed / maxf(absf(step), 0.01), 0.0, 1.0)
 	return p.home.x + d * (step * s) - d * p.give
 
 

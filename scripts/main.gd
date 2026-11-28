@@ -87,6 +87,13 @@ func _shot(spec: String) -> void:
 			g.give_ball(0, 35.0)
 			_choose_defense("base")
 			await _wait(4.5)
+		"drill_set":
+			# Mid-backpedal: the lineman setting the pocket, still facing the rusher.
+			_drill.five = false
+			_start_drill(false)
+			await _wait(0.5)
+			g.drill_snap()
+			await _wait(0.12)
 		"drill", "drill_watch", "drill5", "drill5_pre":
 			_drill.five = what.begins_with("drill5")
 			_start_drill(what != "drill_watch")

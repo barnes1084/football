@@ -62,6 +62,7 @@ const ITEMS := [
 	{key = "wallSquare", label = "Wall: half the width of a lineman's square", min = 0.3, max = 1.2, step = 0.05, def = 1.2, unit = "yd"},
 	{key = "wallEdge", label = "Wall: extra reach outside for the end linemen", min = 0, max = 3, step = 0.1, def = 3, unit = "yd", note = "so edge rushers have to beat the tackles too"},
 	{key = "wallSet", label = "Wall: steps back to set the pocket", min = 0, max = 3, step = 0.1, def = 3, unit = "yd"},
+	{key = "wallSetSpeed", label = "Wall: backpedal speed setting the pocket", min = 1, max = 10, step = 0.1, def = 4, unit = "yd/s"},
 	{key = "wallGive", label = "Wall: pushed back this far, a rusher gets around", min = 0.3, max = 5, step = 0.1, def = 3.1, unit = "yd"},
 	{key = "wallPush", label = "Wall: pass rush push (even matchup)", min = 0, max = 3, step = 0.05, def = 0.55, unit = "yd/s"},
 	{key = "wallRunPush", label = "Wall: push on a run (even matchup)", min = -2, max = 2, step = 0.05, def = 0.05, unit = "yd/s", note = "below 0, the line drives the defense back"},
