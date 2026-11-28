@@ -70,6 +70,7 @@ const ITEMS := [
 	{key = "wallHelp", label = "Wall: a free neighbor's double team slows the push by", min = 0, max = 1, step = 0.05, def = 0.2, unit = "yd/s"},
 	{key = "lineSplit", label = "Lines: how far apart the two lines set up", min = 1, max = 5, step = 0.1, def = 2.2, unit = "yd", note = "offensive and defensive linemen at the snap"},
 	{key = "wallGap", label = "Wall: how far apart a lineman and his rusher stand", min = 0.5, max = 2, step = 0.05, def = 2, unit = "yd"},
+	{key = "wallPancake", label = "Wall: on a run, driven back this far, the rusher is knocked down", min = 0, max = 3, step = 0.1, def = 1.5, unit = "yd", note = "and his blocker goes after a linebacker; 0 = never"},
 	{key = "wallSlip", label = "Wall: how fast a rusher can slide across", min = 0, max = 4, step = 0.1, def = 2.1, unit = "yd/s"},
 	{key = "blockReach", label = "Blocking reach", min = 0.4, max = 2, step = 0.05, def = 2, unit = "yd"},
 	{group = "PASSING"},

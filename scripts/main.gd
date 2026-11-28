@@ -89,14 +89,23 @@ func _shot(spec: String) -> void:
 			await _wait(4.5)
 		"drill_set":
 			# Mid-backpedal: the lineman setting the pocket, still facing the rusher.
-			_drill.five = false
-			_start_drill(false)
+			_drill.line = 1
+			_drill.side = "watch"
+			_start_drill()
 			await _wait(0.5)
 			g.drill_snap()
 			await _wait(0.12)
+		"drill_run":
+			# A run with everyone on: 5 on 5, quarterback, back, linebackers.
+			_drill = {play = "run", line = 5, qb = true, rb = true, lb = true, side = "offense", dl = 0.7, ol = 0.7}
+			_start_drill()
+			await _wait(0.5)
+			g.drill_snap()
+			await _wait(0.55)
 		"drill", "drill_watch", "drill5", "drill5_pre":
-			_drill.five = what.begins_with("drill5")
-			_start_drill(what != "drill_watch")
+			_drill.line = 5 if what.begins_with("drill5") else 1
+			_drill.side = "watch" if what == "drill_watch" else "defense"
+			_start_drill()
 			if what == "drill5_pre":
 				await _wait(0.6)
 				_shot_save(file)
@@ -318,7 +327,7 @@ func show_title() -> void:
 	else:
 		box.add_child(UI.button("NEW SEASON", func(): _pick_team(false), "big"))
 	box.add_child(UI.button("QUICK GAME", func(): _pick_team(true)))
-	box.add_child(UI.button("LINE DRILL", func(): _start_drill(true)))
+	box.add_child(UI.button("LINE DRILL", _start_drill))
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_child(UI.button("HOW TO PLAY", _how_to))
@@ -577,16 +586,15 @@ func resume() -> void:
 
 # ---------- Line drill ----------
 
-var _drill := {you = true, dl = 0.7, ol = 0.7, five = false}
+var _drill := {play = "pass", line = 1, qb = false, rb = false, lb = false, side = "defense", dl = 0.7, ol = 0.7}
 
 
-## One offensive lineman against one defensive lineman, nobody else: try
-## out the wall. You rush (or watch the computer play both).
-func _start_drill(you_rush: bool) -> void:
-	_drill.you = you_rush
+## The linemen (and whoever else you switch on), nobody else: try out the
+## line battle on a pass rush or a run.
+func _start_drill() -> void:
 	season_game = false
 	var game := Game.new(3, "balanced", 5, "balanced", 0, 0)
-	game.start_drill(_drill.you, _drill.dl, _drill.ol, _drill.five)
+	game.start_drill(_drill)
 	_set_game(game)
 	screen = "play"
 	clear_menu()
@@ -595,49 +603,74 @@ func _start_drill(you_rush: bool) -> void:
 	_drill_bar()
 
 
-func _restart_drill() -> void:
-	var log: Array = g.drill_log
-	g.start_drill(_drill.you, _drill.dl, _drill.ol, _drill.five)
+func _restart_drill(keep_log := true) -> void:
+	var log: Array = g.drill_log if keep_log else []
+	g.start_drill(_drill)
 	g.drill_log = log
 	field.set_game(g)
 	clear_menu()
 	_drill_bar()
 
 
-## The drill's controls along the bottom: who rushes, both men's power, exit.
+## The drill's controls along the bottom, in two rows: what's on the field
+## and who you play, then each line's power.
 func _drill_bar() -> void:
-	var bar := HBoxContainer.new()
-	bar.alignment = BoxContainer.ALIGNMENT_CENTER
-	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	bar.offset_top = -110
-	bar.offset_bottom = -16
-	menu.add_child(bar)
-	var you := UI.button("YOU RUSH" if _drill.you else "WATCH", func():
-		_drill.you = not _drill.you
-		_restart_drill())
-	bar.add_child(you)
-	bar.add_child(UI.button("5 ON 5" if _drill.five else "1 ON 1", func():
-		_drill.five = not _drill.five
-		g.drill_log.clear()
-		_restart_drill()))
+	var rows := VBoxContainer.new()
+	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rows.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	rows.offset_top = -200
+	rows.offset_bottom = -12
+	rows.add_theme_constant_override("separation", 8)
+	menu.add_child(rows)
+	var top := HBoxContainer.new()
+	top.alignment = BoxContainer.ALIGNMENT_CENTER
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rows.add_child(top)
+	var bottom := HBoxContainer.new()
+	bottom.alignment = BoxContainer.ALIGNMENT_CENTER
+	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rows.add_child(bottom)
+	# What's being tested: a pass rush or a run.
+	top.add_child(_drill_toggle("PASS RUSH" if _drill.play == "pass" else "RUN", true, func():
+		_drill.play = "run" if _drill.play == "pass" else "pass"
+		_restart_drill(false)))
+	top.add_child(_drill_toggle("%d ON %d" % [_drill.line, _drill.line], true, func():
+		_drill.line = 5 if int(_drill.line) == 1 else 1
+		_restart_drill(false)))
+	# Positions on or off.
+	for pos in [["qb", "QB"], ["rb", "RB"], ["lb", "LB"]]:
+		var key: String = pos[0]
+		top.add_child(_drill_toggle(pos[1], _drill[key], func():
+			_drill[key] = not _drill[key]
+			_restart_drill(false)))
+	var sides := {"defense": "YOU: DEFENSE", "offense": "YOU: OFFENSE", "watch": "WATCH"}
+	top.add_child(_drill_toggle(sides[_drill.side], true, func():
+		var order := ["defense", "offense", "watch"]
+		_drill.side = order[(order.find(_drill.side) + 1) % order.size()]
+		_restart_drill(false)))
 	for side in [["dl", "D-LINE"], ["ol", "O-LINE"]]:
 		var key: String = side[0]
-		bar.add_child(UI.button("−", func():
+		bottom.add_child(UI.button("−", func():
 			_drill[key] = clampf(_drill[key] - 0.1, 0.1, 1.0)
 			_restart_drill()))
-		var l := _line("%s POWER %d" % [side[1], roundi(_drill[key] * 100)], 26, Color.WHITE)
-		bar.add_child(l)
-		bar.add_child(UI.button("+", func():
+		bottom.add_child(_line("%s POWER %d" % [side[1], roundi(_drill[key] * 100)], 24, Color.WHITE))
+		bottom.add_child(UI.button("+", func():
 			_drill[key] = clampf(_drill[key] + 0.1, 0.1, 1.0)
 			_restart_drill()))
-	bar.add_child(UI.button("RESET", func():
-		g.drill_log.clear()
-		_restart_drill()))
-	bar.add_child(UI.button("EXIT", show_title))
-	for c in bar.get_children():
-		if c is Button:
-			c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bottom.add_child(UI.button("RESET", func(): _restart_drill(false)))
+	bottom.add_child(UI.button("EXIT", show_title))
+	for row in [top, bottom]:
+		for c in row.get_children():
+			if c is Button:
+				c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+				c.add_theme_font_size_override("font_size", 24)
+
+
+## A drill button that's lit up (red) when on.
+func _drill_toggle(text: String, on: bool, cb: Callable) -> Button:
+	var b := UI.button(text, cb)
+	UI.style_button(b, UI.RED if on else Color("#2c4a8a"), UI.GOLD if on else Color(1, 1, 1, 0.3))
+	return b
 
 
 # ---------- Play calling ----------
@@ -1150,7 +1183,7 @@ class Hud:
 			if g.sub != "":
 				_center(g.sub, vs.y * 0.3 + 70, 34, Color.WHITE)
 		elif g.phase == "presnap" and g.sub != "":
-			_center(g.sub, vs.y - (170 if g.drill else 90), 30 if g.drill else 32, Color.WHITE)
+			_center(g.sub, vs.y - (250 if g.drill else 90), 26 if g.drill else 32, Color.WHITE)
 		elif g.phase == "live" and g.controlled != null and main.screen == "play":
 			var hint := ""
 			var sides := ["left", "right"] if not Tune.v.swapSides else ["right", "left"]
@@ -1161,8 +1194,9 @@ class Hud:
 			elif g.controlled.team != g.ball_team():
 				hint = "Flick on the %s side to dive" % sides[0]
 			if g.drill:
-				hint = "Push toward the QB to drive him back · push up or down to slip off his edge" if g.drill_beat < 0 else "You're around him: get to the QB!"
-				_center(hint, vs.y - 170, 28, Color(1, 1, 1, 0.8))
+				if g.controlled.team != g.ball_team():
+					hint = "Push toward the ball to drive him back · up or down to slip off his edge" if g.controlled.engaged != null else "Go get the ball!"
+				_center(hint, vs.y - 250, 26, Color(1, 1, 1, 0.8))
 			elif hint != "" and g.t < 3.0:
 				_center(hint, vs.y - 80, 28, Color(1, 1, 1, 0.75))
 		if g.flag != "" and g.phase == "dead":
@@ -1181,13 +1215,22 @@ class Hud:
 		var y0 := 18.0
 		draw_rect(Rect2(x0, y0, w, 128), Color(0.03, 0.05, 0.1, 0.85))
 		draw_string(f, Vector2(x0 + 24, y0 + 44), "LINE DRILL", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, Color("#ffe03c"))
-		var wins := g.drill_log.filter(func(r): return r.won)
-		var rec := "Rushes %d · got around %d" % [g.drill_log.size(), wins.size()]
-		if wins.size():
-			var avg := 0.0
-			for r in wins:
-				avg += r.t
-			rec += " · avg %.1f s" % (avg / wins.size())
+		# The record for this kind of rep.
+		var reps := g.drill_log.filter(func(r): return r.get("play", "pass") == g.drill_cfg.play)
+		var wins := reps.filter(func(r): return r.won)
+		var rec := ""
+		if g.drill_run():
+			var yds := 0.0
+			for r in reps:
+				yds += r.gain
+			rec = "Runs %d · %.1f yd a carry · stuffed %d" % [reps.size(), yds / maxf(1.0, reps.size()), wins.size()]
+		else:
+			rec = "Rushes %d · sacks %d" % [reps.size(), wins.size()]
+			if wins.size():
+				var avg := 0.0
+				for r in wins:
+					avg += r.t
+				rec += " · avg %.1f s" % (avg / wins.size())
 		draw_string(f, Vector2(x0 + 280, y0 + 44), rec, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color.WHITE)
 		# How far the lineman has been driven back, against how far it takes.
 		var ol := g.drill_ol_player()

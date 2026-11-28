@@ -79,21 +79,29 @@ defense back instead. Playing a defensive lineman yourself, push toward the
 ball to drive your man back, or across to slip off the edge of his square.
 Every number for it is a developer setting (Players → Wall).
 
-### Line drill (for trying out the wall)
+### Line drill (for trying out the line)
 
-**LINE DRILL** on the title screen puts just the linemen on the field, with
-a circle where the quarterback stands: **1 ON 1** (one offensive lineman
-against one defensive lineman) or **5 ON 5** (the whole line). Both lines
-set up in the three-point stance, `lineSplit` apart. Tap to snap; in 5 on 5,
-tap a rusher to play him. You play a defensive lineman: push toward the QB
-to drive your man back, or up and down to slip off the edge of his square.
-Get around him and reach the QB for a sack, or he holds you off for 6
-seconds. Blockers punch with their hands out (`art-source/pass_block.png`);
-rushers drive in low. The bar at the top shows how far your blocker has
-been driven back against how far it takes to get around him. Along the
-bottom: rush yourself or watch the computer, 1 on 1 or 5 on 5, each side's
-power, reset the record, or exit. The wall's developer settings apply here
-too.
+**LINE DRILL** on the title screen tries out the line battle with only the
+players you switch on. The buttons along the bottom:
+
+- **PASS RUSH / RUN**: on a pass the line protects (with no quarterback on
+  the field, a circle marks where he'd be); on a run the line drives the
+  defense back for the ball carrier (the quarterback hands off, or with no
+  quarterback the back takes the snap).
+- **1 ON 1 / 5 ON 5**: one lineman a side, or the whole line.
+- **QB, RB, LB**: switch the quarterback, the running back and the
+  linebackers (one behind a single rusher, three behind the whole line) on
+  or off. Linebackers blitz a pass and read a run; the back blocks on a pass.
+- **YOU: DEFENSE / YOU: OFFENSE / WATCH**: play a defender (tap any one),
+  the quarterback or the ball carrier, or watch the computer play both.
+- Each line's power, **RESET** (clears the record) and **EXIT**.
+
+A rep ends with a sack, a tackle (the gain is shown), a breakaway of 10+
+yards, or after 6 seconds. The panel at the top keeps the record (sacks on
+a pass rush; yards a carry and stuffs on a run) and shows how far the
+blocker in front of you has been driven back. On a run, a lineman who
+drives his man far enough back knocks him down and goes after a
+linebacker. The wall's developer settings apply here too.
 
 ### Rules
 

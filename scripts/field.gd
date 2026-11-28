@@ -158,6 +158,11 @@ func _process(dt: float) -> void:
 
 func _focus() -> Vector2:
 	if g.drill:
+		# Follow a ball carrier who gets past the line.
+		if g.phase in ["live", "dead"] and g.carrier != null and g.players.has(g.carrier):
+			var gain: float = (g.carrier.at.x - g.los_x()) * g.dir[g.poss]
+			if gain > -1.0:
+				return Vector2(g.carrier.at.x - g.dir[g.poss] * 1.5, g.ball_y)
 		return Vector2(g.los_x() - g.dir[g.poss] * 2.5, g.ball_y)
 	match g.phase:
 		"presnap", "call":
@@ -513,7 +518,7 @@ class Overlay:
 			for py in [Game.MID_Y - 3.08, Game.MID_Y + 3.08]:
 				draw_line(f.P(gx, py, 3.3), f.P(gx, py, 11.0), yel, w)
 		# The line drill: where the quarterback would be.
-		if g.drill and g.qb != null:
+		if g.drill and g.qb != null and not g.players.has(g.qb):
 			var qc: Vector2 = f.P(g.qb.at.x, g.qb.at.y)
 			var rr := k * 0.9
 			var pts := PackedVector2Array()

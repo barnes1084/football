@@ -131,6 +131,9 @@ var drill_ol := 0.7
 var drill_log: Array = []
 var drill_beat := -1.0
 var drill_five := false
+## What's in the drill: pass or run, 1 or 5 linemen a side, which other
+## positions are on the field, who you play, and each line's power.
+var drill_cfg := {play = "pass", line = 1, qb = false, rb = false, lb = false, side = "defense", dl = 0.7, ol = 0.7}
 const DRILL_TIME := 6.0
 
 
@@ -787,6 +790,8 @@ func _snap() -> void:
 		qb.job = "carry"
 	if qb != null:
 		qb.home = qb.at
+	if drill:
+		_drill_snap_roles()
 	# Blockers pick their men; the linemen form the wall.
 	for p: P in offense():
 		if p.role == "OL":
@@ -920,7 +925,7 @@ func _live(dt: float, move: Vector2) -> void:
 	_move = move
 	if controlled != null and move.length() > 0.05:
 		controlled.took = true
-	if not drill:
+	if not drill or players.has(qb):
 		_handoff()
 	# Movement.
 	for p: P in players:
@@ -955,7 +960,8 @@ func _live(dt: float, move: Vector2) -> void:
 			return
 	if drill:
 		_drill_check()
-		return
+		if phase != "live" or carrier == null or not players.has(carrier):
+			return
 	if carrier != null:
 		if carrier == qb and not past_los and (carrier.at.x - los_x()) * dir[poss] > 0.3:
 			past_los = true
@@ -1068,6 +1074,8 @@ func _qb_brain(p: P) -> Vector2:
 
 
 func _ai_read(at_depth: bool) -> void:
+	if drill:
+		return
 	var best: P = null
 	var best_score := -INF
 	var best_to := Vector2.ZERO
@@ -1350,7 +1358,9 @@ func _blocks(dt: float) -> void:
 		for o: P in players:
 			if o.team == p.team or o.engaged != null or o.free > 0 or o.down > 0 or o.dive > 0:
 				continue
-			if o.at.distance_to(p.at) < Tune.v.blockReach:
+			# Linemen climbing to the second level block at the wall's contact distance.
+			var reach: float = maxf(Tune.v.blockReach, Tune.v.wallGap) if p.role == "OL" else Tune.v.blockReach
+			if o.at.distance_to(p.at) < reach:
 				p.engaged = o
 				o.engaged = p
 				o.vel = Vector2.ZERO
@@ -1460,6 +1470,18 @@ func _wall(dt: float, bt: int) -> void:
 		o.vel = p.vel
 		p.face = d
 		o.face = -d
+		# On a run, a lineman who drives his man far enough back pancakes
+		# him, then climbs to the second level to block a linebacker.
+		if not pocket and Tune.v.wallPancake > 0 and p.give <= -Tune.v.wallPancake:
+			o.engaged = null
+			p.engaged = null
+			o.down = 1.2
+			o.set_act("pancaked")
+			p.wall = false
+			p.target = null
+			p.think = 0.0
+			events.append({type = "tackle", team = p.team, big = false})
+			continue
 		# Room to get around him: pushed back far enough, slid off the
 		# edge of his square, or the ball carrier right there.
 		var around: bool = p.give >= Tune.v.wallGive or o.at.y < p.lo - 0.45 or o.at.y > p.hi + 0.45
@@ -1618,6 +1640,9 @@ func _check_end() -> bool:
 # ---------- After the whistle ----------
 
 func _whistle(kind: String, c: P) -> void:
+	if drill:
+		_drill_whistle(kind, c)
+		return
 	phase = "dead"
 	phase_t = 0.0
 	plays += 1
@@ -1938,16 +1963,20 @@ func _kick_step(dt: float) -> void:
 
 # ---------- Line drill ----------
 
-## One offensive lineman against one defensive lineman. You play the
-## defensive lineman (or watch the computer do both): drive your man back,
-## or slip off the edge of his square, and get to the quarterback's spot.
-func start_drill(you_rush: bool, dl_power: float, ol_power: float, five := false) -> void:
+## Linemen and whoever else you put on the field, to try out the line
+## battle: a pass rush (the line protects) or a run (the line drives the
+## defense back for the ball carrier). `cfg`: play ("pass" or "run"), line
+## (1 or 5 a side), qb, rb, lb (on or off), side ("defense", "offense" or
+## "watch"), dl and ol (each line's power, 0..1). With no quarterback the
+## pass rush goes after an unseen spot where he'd be.
+func start_drill(cfg: Dictionary) -> void:
 	drill = true
-	drill_five = five
-	drill_user = you_rush
-	drill_dl = dl_power
-	drill_ol = ol_power
-	user = 0
+	for k in cfg:
+		drill_cfg[k] = cfg[k]
+	drill_five = int(drill_cfg.line) == 5
+	drill_user = drill_cfg.side == "defense"
+	drill_dl = drill_cfg.dl
+	drill_ol = drill_cfg.ol
 	poss = 1
 	dir = [1, -1]
 	los = 40.0
@@ -1956,6 +1985,10 @@ func start_drill(you_rush: bool, dl_power: float, ol_power: float, five := false
 	ball_y = MID_Y
 	clock = 3600.0
 	_drill_setup()
+
+
+func drill_run() -> bool:
+	return drill_cfg.play == "run"
 
 
 func _drill_setup() -> void:
@@ -1971,8 +2004,18 @@ func _drill_setup() -> void:
 	throw_t = -1.0
 	flag = ""
 	drill_beat = -1.0
-	off_call = Playbook.play("slants")
+	var run := drill_run()
+	off_call = Playbook.play("dive").duplicate() if run else Playbook.play("slants").duplicate()
+	if not run:
+		off_call.drop = 6.0
 	def_call = Playbook.defense("base")
+	match drill_cfg.side:
+		"defense":
+			user = 1 - poss
+		"offense":
+			user = poss
+		_:
+			user = -1
 	var d: int = dir[poss]
 	var lx := los_x()
 	var split: float = Tune.v.lineSplit
@@ -1980,9 +2023,11 @@ func _drill_setup() -> void:
 	# each rusher head up on a lineman.
 	var lanes := [0.0] if not drill_five else [-2.6, -1.3, 0.0, 1.3, 2.6]
 	var slots := ["LT", "LG", "C", "RG", "RT"] if drill_five else ["C"]
-	var ol_roster: Array = teams[poss].offense.filter(func(r): return r.role == "OL")
-	var dl_roster: Array = teams[1 - poss].defense.filter(func(r): return r.role == "DL")
-	var dl: P = null
+	var o_team: Dictionary = teams[poss]
+	var de_team: Dictionary = teams[1 - poss]
+	var ol_roster: Array = o_team.offense.filter(func(r): return r.role == "OL")
+	var dl_roster: Array = de_team.defense.filter(func(r): return r.role == "DL")
+	var middle: P = null
 	for i in lanes.size():
 		var o_r: Dictionary = ol_roster[i % ol_roster.size()].duplicate()
 		o_r.pwr = drill_ol
@@ -1993,19 +2038,62 @@ func _drill_setup() -> void:
 		var rusher := _make_player(1 - poss, {slot = "DL%d" % (i + 1), role = "DL"}, d_r, Vector2(lx + d * split * 0.55, ball_y + lanes[i] * d))
 		rusher.job = "rush"
 		if lanes[i] == 0.0:
-			dl = rusher
-	# The quarterback's spot: the target, not drawn as a player.
-	qb = P.new()
-	qb.team = poss
-	qb.role = "QB"
-	qb.id = 99
-	qb.at = Vector2(lx - 6.0 * d, ball_y)
-	carrier = qb
-	controlled = dl if drill_user else null
-	if drill_user:
-		_banner("", ("Tap a rusher to play him · " if drill_five else "") + "Tap to snap · push toward the QB to drive him back · push up or down to slip off his edge")
+			middle = rusher
+	# Linebackers: one behind a single rusher, three behind the whole line.
+	if drill_cfg.lb:
+		var lb_roster: Array = de_team.defense.filter(func(r): return r.role == "LB")
+		var spots := [0.0] if not drill_five else [-4.0, 0.0, 4.0]
+		for i in spots.size():
+			var lb := _make_player(1 - poss, {slot = "LB%d" % (i + 1), role = "LB"}, lb_roster[i % lb_roster.size()], Vector2(lx + d * 4.5, ball_y + spots[i] * d))
+			# They blitz a pass and read a run.
+			lb.job = "zone" if run else "rush"
+			lb.zone = lb.at
+	# The quarterback, or an unseen spot where he'd be.
+	if drill_cfg.qb:
+		qb = _make_player(poss, {slot = "QB", role = "QB"}, o_team.offense[0], Vector2(lx - d * 1.4, ball_y))
+		qb.job = "qb"
 	else:
-		_banner("", "")
+		qb = P.new()
+		qb.team = poss
+		qb.role = "QB"
+		qb.id = 99
+		qb.at = Vector2(lx - 6.0 * d, ball_y)
+	# The running back: the ball carrier on a run (always there for a run
+	# without a quarterback), a pass blocker otherwise.
+	if drill_cfg.rb or (run and not drill_cfg.qb):
+		var rb := _make_player(poss, {slot = "RB", role = "RB"}, o_team.offense[1], Vector2(lx - d * 6.0, ball_y))
+		if run:
+			rb.job = "carry"
+			for pt in off_call.path:
+				rb.route.append(Vector2(lx + pt[0] * d, ball_y + pt[1] * d))
+		else:
+			rb.job = "block"
+	carrier = qb
+	controlled = middle if drill_cfg.side == "defense" else null
+	var hint := ""
+	match drill_cfg.side:
+		"defense":
+			hint = "Tap a defender to play him · tap to snap · push toward the ball to drive your man back, up or down to slip off his edge"
+		"offense":
+			hint = "Tap to snap · " + ("run behind the wall" if run else "stay in the pocket")
+	_banner("", hint)
+
+
+## At the snap with no quarterback: on a run the back takes a direct snap.
+func _drill_snap_roles() -> void:
+	if players.has(qb):
+		if user == poss and not drill_run():
+			controlled = qb
+		return
+	if drill_run():
+		var rb := _carrier_slot()
+		if rb != null:
+			carrier = rb
+			handed = true
+			if user == poss:
+				controlled = rb
+	elif user == poss:
+		controlled = null
 
 
 func drill_snap() -> void:
@@ -2022,7 +2110,7 @@ func drill_ol_player() -> P:
 			continue
 		if controlled != null and p.engaged == controlled:
 			return p
-		if best == null or p.give > best.give:
+		if best == null or absf(p.give) > absf(best.give):
 			best = p
 	return best
 
@@ -2034,27 +2122,62 @@ func drill_dl_player() -> P:
 	return null
 
 
-## The rusher wins by getting around and reaching the quarterback's spot;
-## the lineman wins by holding him off until time runs out.
+## How far the ball got past the line.
+func _drill_gain(c: P) -> float:
+	return (c.at.x - los_x()) * dir[poss] if c != null else 0.0
+
+
+## Each frame: who got past his blocker, a sack of the unseen quarterback,
+## a run that broke free, and the clock.
 func _drill_check() -> void:
-	var dl: P = null
+	var sacker: P = null
 	for p: P in players:
-		if p.role != "DL":
+		if p.team == poss:
 			continue
 		if drill_beat < 0 and p.free > 0:
 			drill_beat = t
 			events.append({type = "miss", team = p.team})
-		if p.at.distance_to(qb.at) < Tune.v.tackleReach + 0.3:
-			dl = p
-	if dl != null:
-		dl.set_act("tackler")
-		dl.down = 1.0
+		if not players.has(qb) and carrier == qb and p.at.distance_to(qb.at) < Tune.v.tackleReach + 0.3:
+			sacker = p
+	if sacker != null:
+		sacker.set_act("tackler")
+		sacker.down = 1.0
 		events.append({type = "tackle", team = poss, big = true})
-		drill_log.append({won = true, t = drill_beat if drill_beat >= 0 else t})
-		_drill_end("SACK!", "Got around him in %.1f s" % (drill_beat if drill_beat >= 0 else t))
-	elif t >= DRILL_TIME:
-		drill_log.append({won = false, t = t})
-		_drill_end("STONED!", "He held you for %.0f seconds" % DRILL_TIME)
+		_drill_record(true, 0.0)
+		_drill_end("SACK!", "Got there in %.1f s" % (drill_beat if drill_beat >= 0 else t))
+		return
+	if drill_run() and carrier != null and players.has(carrier) and _drill_gain(carrier) >= 10.0:
+		_drill_record(false, _drill_gain(carrier))
+		_drill_end("BREAKAWAY!", "10+ yards: the line opened a hole")
+		return
+	if t >= DRILL_TIME:
+		if drill_run():
+			var g := _drill_gain(carrier) if carrier != null and players.has(carrier) else 0.0
+			_drill_record(g <= 2.0, g)
+			_drill_end("GAIN OF %d" % roundi(g) if g > 0.5 else "STUFFED!", "")
+		else:
+			_drill_record(false, 0.0)
+			_drill_end("PROTECTED!", "The line held for %.0f seconds" % DRILL_TIME)
+
+
+## A whistle in the drill: a tackle, a sack, a ball thrown away or out of bounds.
+func _drill_whistle(kind: String, c: P) -> void:
+	var g := _drill_gain(c)
+	if kind == "incomplete":
+		_drill_record(false, 0.0)
+		_drill_end("THROWN AWAY", "")
+	elif c == qb and not drill_run() and g <= 0.0:
+		_drill_record(true, g)
+		_drill_end("SACK!", "Got there in %.1f s" % (drill_beat if drill_beat >= 0 else t))
+	else:
+		_drill_record(g <= 2.0, g)
+		var head := "STUFFED!" if g <= 1.0 else "GAIN OF %d" % roundi(g)
+		_drill_end(head, "Loss of %d" % roundi(-g) if g < -0.5 else "")
+
+
+## won = the defense won the rep (a sack, or a run held to 2 yards or less).
+func _drill_record(won: bool, gain: float) -> void:
+	drill_log.append({won = won, t = drill_beat if drill_beat >= 0 else t, gain = gain, play = drill_cfg.play})
 
 
 func _drill_end(head: String, s: String) -> void:

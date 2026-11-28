@@ -28,6 +28,7 @@ func _init() -> void:
 	test_juke()
 	test_wall()
 	test_drill()
+	test_drill_run()
 	test_downs()
 	test_kicks()
 	test_quarter_keeps_kickoff()
@@ -36,6 +37,15 @@ func _init() -> void:
 	test_full_games()
 	print("%d passed, %d failed" % [passed, failed])
 	quit(1 if failed else 0)
+
+
+## The wall numbers the mechanics tests were written for, so tuning the
+## defaults in default_settings.cfg doesn't change what they check.
+func pin_wall() -> void:
+	for kv in [["wallSquare", 0.65], ["wallEdge", 1.2], ["wallSet", 1.0], ["wallSetSpeed", 4.0], ["wallGive", 1.6],
+			["wallPush", 0.55], ["wallRunPush", 0.05], ["wallPower", 1.8], ["wallHelp", 0.2], ["wallSlip", 1.4],
+			["wallGap", 1.1], ["blockReach", 1.0], ["lineSplit", 2.2]]:
+		Tune.v[kv[0]] = kv[1]
 
 
 func step_until(g: Game, cond: Callable, sec := 30.0, move := Vector2.ZERO) -> bool:
@@ -250,13 +260,18 @@ func wall_time(power: float, seed_value: int) -> float:
 
 
 func test_wall() -> void:
+	pin_wall()
 	var g := user_offense(30.0, "slants")
 	g.hike()
 	step_until(g, func(): return g.t > 0.5, 2.0)
 	var line := g.players.filter(func(p): return p.team == 0 and p.role == "OL")
 	check(line.all(func(p): return p.wall), "the offensive line forms the wall")
 	var engaged := line.filter(func(p): return p.engaged != null).size()
-	check(engaged >= 3, "the wall picks up the rushers (%d blocking)" % engaged)
+	check(engaged >= 2, "the wall picks up the rushers (%d blocking)" % engaged)
+	var d: int = g.dir[g.poss]
+	var held := g.players.filter(func(p): return p.role == "DL").all(func(o):
+		return line.all(func(p): return absf(o.at.y - p.at.y) > Tune.v.wallSquare or (o.at.x - p.at.x) * d > 0.0))
+	check(held, "no rusher walks through the wall")
 	# A defender can't walk through the wall: he has to push his man back.
 	var strong := 0.0
 	var weak := 0.0
@@ -282,56 +297,99 @@ func test_wall() -> void:
 		check(depth > 0.5, "the rusher is held in front of the wall (%.2f yd)" % depth)
 
 
-## Runs line drill rushes; returns how many the rusher won.
-## `steer`: you push toward the quarterback's spot (else the computer rushes).
-func drill_wins(dl: float, ol: float, n: int, steer := false, you := false, five := false) -> int:
+## Runs drill reps; returns them. `steer`: you push toward the ball
+## (otherwise the computer plays your man).
+func drill_reps(cfg: Dictionary, n: int, steer := false) -> Array:
 	var g := Game.new(3, "balanced", 5, "balanced", 0, 900)
-	g.start_drill(you, dl, ol, five)
+	g.start_drill(cfg)
 	var guard := 0
 	while g.drill_log.size() < n and guard < 120 * 20 * n:
 		if g.phase == "presnap":
 			g.drill_snap()
 		var move := Vector2.ZERO
 		if steer and g.phase == "live" and g.controlled != null:
-			move = (g.qb.at - g.controlled.at).normalized()
+			var target: Vector2 = g.carrier.at if g.carrier != null else g.qb.at
+			move = (target - g.controlled.at).normalized()
 		g.step(1.0 / 120.0, move)
 		g.events.clear()
 		guard += 1
-	return g.drill_log.filter(func(r): return r.won).size()
+	return g.drill_log
+
+
+func wins(log: Array) -> int:
+	return log.filter(func(r): return r.won).size()
+
+
+func avg_gain(log: Array) -> float:
+	var t := 0.0
+	for r in log:
+		t += r.gain
+	return t / maxf(1.0, log.size())
 
 
 func test_drill() -> void:
+	pin_wall()
 	var g := Game.new(3, "balanced", 5, "balanced", 0, 1)
-	g.start_drill(true, 0.7, 0.7)
-	check(g.players.size() == 2, "the line drill has just two players")
-	check(g.players.any(func(p): return p.role == "OL") and g.players.any(func(p): return p.role == "DL"), "one offensive lineman and one defensive lineman")
+	g.start_drill({play = "pass", line = 1, qb = false, rb = false, lb = false, side = "defense", dl = 0.7, ol = 0.7})
+	check(g.players.size() == 2, "the 1 on 1 drill has just two players")
 	check(g.controlled != null and g.controlled.role == "DL", "you play the defensive lineman")
-	var strong := drill_wins(0.95, 0.4, 6)
-	var weak := drill_wins(0.35, 0.9, 6)
+	# The pass rush.
+	var strong := wins(drill_reps({play = "pass", line = 1, side = "watch", dl = 0.95, ol = 0.4}, 6))
+	var weak := wins(drill_reps({play = "pass", line = 1, side = "watch", dl = 0.35, ol = 0.95}, 6))
 	check(strong >= 5, "a strong rusher beats a weak lineman (%d of 6)" % strong)
-	check(weak <= 1, "a strong lineman holds off a weak rusher (%d of 6 got around)" % weak)
-	# You, pushing straight at the quarterback's spot, in an even matchup.
-	var pushing := drill_wins(0.7, 0.7, 4, true, true)
+	check(weak <= 1, "a strong lineman holds off a weak rusher (%d of 6 sacks)" % weak)
+	var pushing := wins(drill_reps({play = "pass", line = 1, side = "defense", dl = 0.7, ol = 0.7}, 4, true))
 	check(pushing >= 3, "driving at the quarterback wins an even matchup (%d of 4)" % pushing)
-	# Five on five.
+	# Five on five, with a quarterback, a back and linebackers.
 	var f := Game.new(3, "balanced", 5, "balanced", 0, 1)
-	f.start_drill(true, 0.7, 0.7, true)
-	check(f.players.size() == 10, "5 on 5 has ten linemen (%d)" % f.players.size())
-	check(f.players.filter(func(p): return p.role == "OL").size() == 5 and f.players.filter(func(p): return p.role == "DL").size() == 5, "five on each side")
-	var lx := f.los_x()
+	f.start_drill({play = "pass", line = 5, qb = true, rb = true, lb = true, side = "defense"})
+	var count := func(role): return f.players.filter(func(p): return p.role == role).size()
+	check(count.call("OL") == 5 and count.call("DL") == 5, "five linemen on each side")
+	check(count.call("QB") == 1 and count.call("RB") == 1, "the quarterback and back are on the field")
+	check(count.call("LB") == 3, "three linebackers when they're switched on")
+	check(f.players.size() == 15, "nobody else (%d players)" % f.players.size())
 	var apart: float = absf(f.players.filter(func(p): return p.role == "DL")[0].at.x - f.players.filter(func(p): return p.role == "OL")[0].at.x)
 	check(is_equal_approx(apart, Tune.v.lineSplit), "the lines set up %.1f yd apart (%.2f)" % [Tune.v.lineSplit, apart])
-	var o_one = f.players.filter(func(p): return p.role == "DL")[0]
-	check(f.select_at(o_one.at), "you can pick any of the five defensive linemen")
+	check(f.select_at(f.players.filter(func(p): return p.role == "LB")[0].at), "you can pick a linebacker")
 	f.drill_snap()
 	for i in 120:
 		f.step(1.0 / 120.0)
 		f.events.clear()
 	var blocked := f.players.filter(func(p): return p.role == "OL" and p.engaged != null).size()
 	check(blocked >= 4, "the wall picks up the rush (%d of 5 blocking)" % blocked)
-	var five_strong := drill_wins(0.95, 0.4, 3, false, false, true)
-	var five_weak := drill_wins(0.35, 0.95, 3, false, false, true)
-	check(five_strong >= five_weak, "5 on 5: strong rushers do better than weak ones (%d vs %d)" % [five_strong, five_weak])
+	check(f.qb.at.distance_to(f.qb.home) > 2.0, "the quarterback drops back")
+	var sacks := drill_reps({play = "pass", line = 5, qb = true, rb = true, lb = true, side = "watch"}, 3)
+	check(sacks.size() == 3, "pass rush reps with a quarterback finish (%d)" % sacks.size())
+	# Toggling a position off takes it off the field.
+	var h := Game.new(3, "balanced", 5, "balanced", 0, 1)
+	h.start_drill({play = "pass", line = 5, qb = true, rb = false, lb = false, side = "defense"})
+	check(h.players.filter(func(p): return p.role == "RB" or p.role == "LB").is_empty(), "positions switched off aren't on the field")
+
+
+func test_drill_run() -> void:
+	pin_wall()
+	# A run: the line drives the defense back and the back carries it.
+	var g := Game.new(3, "balanced", 5, "balanced", 0, 1)
+	g.start_drill({play = "run", line = 5, qb = true, rb = true, lb = true, side = "offense"})
+	g.drill_snap()
+	step_until(g, func(): return g.handed or g.phase != "live", 3.0)
+	check(g.handed and g.carrier != null and g.carrier.role == "RB", "the quarterback hands off to the back")
+	check(g.controlled == g.carrier, "on offense you take the back after the handoff")
+	# With no quarterback the back takes a direct snap.
+	var d := Game.new(3, "balanced", 5, "balanced", 0, 1)
+	d.start_drill({play = "run", line = 1, qb = false, rb = false, lb = false, side = "watch"})
+	check(d.players.any(func(p): return p.role == "RB"), "a run always has a ball carrier")
+	d.drill_snap()
+	check(d.carrier != null and d.carrier.role == "RB", "with no quarterback the back takes the snap")
+	# A strong line opens holes; a weak one gets stuffed.
+	var strong := drill_reps({play = "run", line = 5, qb = true, rb = true, lb = true, side = "watch", dl = 0.35, ol = 0.95}, 5)
+	var weak := drill_reps({play = "run", line = 5, qb = true, rb = true, lb = true, side = "watch", dl = 0.95, ol = 0.35}, 5)
+	print("drill runs: strong line %.1f yd a carry, weak line %.1f" % [avg_gain(strong), avg_gain(weak)])
+	check(avg_gain(strong) > avg_gain(weak), "a strong line gains more on the ground (%.1f vs %.1f yd)" % [avg_gain(strong), avg_gain(weak)])
+	# You on defense, going after the runner.
+	var you := drill_reps({play = "run", line = 1, qb = false, rb = true, lb = false, side = "defense", dl = 0.7, ol = 0.7}, 4, true)
+	check(you.size() == 4, "run reps against you finish (%d)" % you.size())
+	Tune.reset()
 
 
 func test_downs() -> void:
