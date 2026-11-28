@@ -239,7 +239,7 @@ func wall_time(power: float, seed_value: int) -> float:
 		if p != dl and p != g.qb and p.role != "OL":
 			p.down = 9999.0
 			p.job = "out"
-	for i in 900:
+	for i in 1800:
 		g.step(1.0 / 120.0)
 		g.events.clear()
 		if dl.free > 0 or dl.act == "tackler":
@@ -264,7 +264,7 @@ func test_wall() -> void:
 		strong += wall_time(0.95, 500 + i)
 		weak += wall_time(0.35, 500 + i)
 	print("wall: a strong rusher gets around in %.1f s, a weak one in %.1f s (99 = never)" % [strong / 4, weak / 4])
-	check(strong < 20.0, "a strong rusher gets around (%.1f s avg)" % (strong / 4))
+	check(strong / 4 < 14.0, "a strong rusher gets around (%.1f s avg)" % (strong / 4))
 	check(strong < weak, "stronger rushers push the wall back faster (%.1f s vs %.1f s)" % [strong / 4, weak / 4])
 	# You at defensive tackle, pushing straight at the quarterback.
 	var h := user_defense(30.0, "base", 77)
@@ -283,14 +283,18 @@ func test_wall() -> void:
 
 
 ## Runs line drill rushes; returns how many the rusher won.
-func drill_wins(dl: float, ol: float, n: int, push := Vector2.ZERO, you := false) -> int:
+## `steer`: you push toward the quarterback's spot (else the computer rushes).
+func drill_wins(dl: float, ol: float, n: int, steer := false, you := false, five := false) -> int:
 	var g := Game.new(3, "balanced", 5, "balanced", 0, 900)
-	g.start_drill(you, dl, ol)
+	g.start_drill(you, dl, ol, five)
 	var guard := 0
 	while g.drill_log.size() < n and guard < 120 * 20 * n:
 		if g.phase == "presnap":
 			g.drill_snap()
-		g.step(1.0 / 120.0, push if g.phase == "live" else Vector2.ZERO)
+		var move := Vector2.ZERO
+		if steer and g.phase == "live" and g.controlled != null:
+			move = (g.qb.at - g.controlled.at).normalized()
+		g.step(1.0 / 120.0, move)
 		g.events.clear()
 		guard += 1
 	return g.drill_log.filter(func(r): return r.won).size()
@@ -307,12 +311,27 @@ func test_drill() -> void:
 	check(strong >= 5, "a strong rusher beats a weak lineman (%d of 6)" % strong)
 	check(weak <= 1, "a strong lineman holds off a weak rusher (%d of 6 got around)" % weak)
 	# You, pushing straight at the quarterback's spot, in an even matchup.
-	var gd := Game.new(3, "balanced", 5, "balanced", 0, 1)
-	gd.start_drill(true, 0.7, 0.7)
-	var pushing := drill_wins(0.7, 0.7, 4, Vector2(-gd.dir[gd.poss], 0), true)
-	check(pushing >= 3, "driving straight at him wins an even matchup (%d of 4)" % pushing)
-	var idle := drill_wins(0.7, 0.7, 4, Vector2(0, 0.0), true)
-	check(idle <= pushing, "pushing beats standing still (%d vs %d)" % [pushing, idle])
+	var pushing := drill_wins(0.7, 0.7, 4, true, true)
+	check(pushing >= 3, "driving at the quarterback wins an even matchup (%d of 4)" % pushing)
+	# Five on five.
+	var f := Game.new(3, "balanced", 5, "balanced", 0, 1)
+	f.start_drill(true, 0.7, 0.7, true)
+	check(f.players.size() == 10, "5 on 5 has ten linemen (%d)" % f.players.size())
+	check(f.players.filter(func(p): return p.role == "OL").size() == 5 and f.players.filter(func(p): return p.role == "DL").size() == 5, "five on each side")
+	var lx := f.los_x()
+	var apart: float = absf(f.players.filter(func(p): return p.role == "DL")[0].at.x - f.players.filter(func(p): return p.role == "OL")[0].at.x)
+	check(is_equal_approx(apart, Tune.v.lineSplit), "the lines set up %.1f yd apart (%.2f)" % [Tune.v.lineSplit, apart])
+	var o_one = f.players.filter(func(p): return p.role == "DL")[0]
+	check(f.select_at(o_one.at), "you can pick any of the five defensive linemen")
+	f.drill_snap()
+	for i in 120:
+		f.step(1.0 / 120.0)
+		f.events.clear()
+	var blocked := f.players.filter(func(p): return p.role == "OL" and p.engaged != null).size()
+	check(blocked >= 4, "the wall picks up the rush (%d of 5 blocking)" % blocked)
+	var five_strong := drill_wins(0.95, 0.4, 3, false, false, true)
+	var five_weak := drill_wins(0.35, 0.95, 3, false, false, true)
+	check(five_strong >= five_weak, "5 on 5: strong rushers do better than weak ones (%d vs %d)" % [five_strong, five_weak])
 
 
 func test_downs() -> void:

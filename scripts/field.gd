@@ -105,8 +105,11 @@ func layout() -> void:
 	view = get_viewport_rect().size
 	sq = Tune.v.fieldTilt
 	if g != null and g.drill:
-		# The line drill: up close.
-		k = view.x / 16.0
+		# The line drill: up close; for five on five, farther out and seen
+		# from higher up so every matchup has its own lane.
+		k = view.x / (26.0 if g.drill_five else 16.0)
+		if g.drill_five:
+			sq = 0.95
 	elif whole_field():
 		# Zoom out until both sidelines fit under the scoreboard.
 		k = (view.y - TOP_PX - BOTTOM_PX) / ((Game.FIELD_W + SIDE_MARGIN * 2) * sq)
@@ -205,6 +208,8 @@ func _sync_players() -> void:
 			actors.add_child(s)
 			sprites[p] = s
 	var sc: float = player_scale() * k / 56.5
+	if g.drill and g.drill_five:
+		sc *= 0.75
 	for p in g.players:
 		var s: Sprite2D = sprites[p]
 		var pose := pose_for(p)
@@ -266,7 +271,8 @@ func pose_for(p) -> String:
 	# The wall: linemen block from the low crouch, rocking as they're pushed.
 	if p.wall and phase in ["live", "dead"] and p.vel.length() < 3.0:
 		if p.engaged != null:
-			return "lb" if int(Time.get_ticks_msec() / 260 + p.id) % 2 == 0 else "lb2"
+			# Hands out, punching: the blocking stance.
+			return "passblock"
 		return "lb"
 	if p.engaged != null:
 		var push := int(Time.get_ticks_msec() / 220 + p.id) % 2 == 0

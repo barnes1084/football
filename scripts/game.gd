@@ -130,6 +130,7 @@ var drill_dl := 0.7
 var drill_ol := 0.7
 var drill_log: Array = []
 var drill_beat := -1.0
+var drill_five := false
 const DRILL_TIME := 6.0
 
 
@@ -451,6 +452,7 @@ func _setup() -> void:
 	for i in Playbook.DEF_FORM.size():
 		var s: Dictionary = Playbook.DEF_FORM[i]
 		dlist.append(_make_player(1 - poss, s, de_team.defense[i], Vector2(lx + s.dx * d, ball_y + s.dy * d)))
+	_split_lines()
 	_assign_jobs()
 	if user == poss:
 		controlled = null
@@ -474,6 +476,20 @@ func _slot(slot: String) -> P:
 		if p.slot == slot:
 			return p
 	return null
+
+
+## The two lines set up `lineSplit` apart: the offensive line a little
+## behind the ball, the defensive line across from it.
+func _split_lines() -> void:
+	var d: int = dir[poss]
+	var lx := los_x()
+	var split: float = Tune.v.lineSplit
+	for p: P in players:
+		if p.role == "OL":
+			p.at.x = lx - d * split * 0.45
+		elif p.role == "DL":
+			p.at.x = lx + d * split * 0.55
+		p.tgt = p.at
 
 
 ## Routes, blocks and coverage for the play called.
@@ -769,6 +785,8 @@ func _snap() -> void:
 	if off_call.kind == "run" and off_call.carrier == "QB":
 		handed = true
 		qb.job = "carry"
+	if qb != null:
+		qb.home = qb.at
 	# Blockers pick their men; the linemen form the wall.
 	for p: P in offense():
 		if p.role == "OL":
@@ -780,7 +798,7 @@ func _snap() -> void:
 	line.sort_custom(func(a, b): return a.home.y < b.home.y)
 	for i in line.size():
 		var p: P = line[i]
-		var edge: float = 0.0 if drill else Tune.v.wallEdge
+		var edge: float = 0.0 if drill and line.size() == 1 else Tune.v.wallEdge
 		p.lo = p.home.y - Tune.v.wallSquare - (edge if i == 0 else 0.0)
 		p.hi = p.home.y + Tune.v.wallSquare + (edge if i == line.size() - 1 else 0.0)
 		if p.job in ["block", "lead"]:
@@ -1129,7 +1147,13 @@ func _block_brain(p: P) -> Vector2:
 func wall_x(p: P) -> float:
 	var d: int = dir[poss]
 	var s := clampf(t / 0.4, 0.0, 1.0)
-	var step: float = -Tune.v.wallSet if off_call.get("kind", "") == "pass" else 0.4
+	var step := 0.4
+	if off_call.get("kind", "") == "pass":
+		# Set the pocket, but stay in front of where the quarterback drops to.
+		var lx := los_x()
+		var qb_depth: float = maxf(float(off_call.get("drop", 5.0)), absf(qb.home.x - lx) if qb != null else 0.0)
+		var line_depth := absf(p.home.x - lx)
+		step = -minf(Tune.v.wallSet, maxf(0.0, qb_depth - 1.5 - line_depth))
 	return p.home.x + d * (step * s) - d * p.give
 
 
@@ -1913,8 +1937,9 @@ func _kick_step(dt: float) -> void:
 ## One offensive lineman against one defensive lineman. You play the
 ## defensive lineman (or watch the computer do both): drive your man back,
 ## or slip off the edge of his square, and get to the quarterback's spot.
-func start_drill(you_rush: bool, dl_power: float, ol_power: float) -> void:
+func start_drill(you_rush: bool, dl_power: float, ol_power: float, five := false) -> void:
 	drill = true
+	drill_five = five
 	drill_user = you_rush
 	drill_dl = dl_power
 	drill_ol = ol_power
@@ -1946,14 +1971,25 @@ func _drill_setup() -> void:
 	def_call = Playbook.defense("base")
 	var d: int = dir[poss]
 	var lx := los_x()
-	var o_r: Dictionary = teams[poss].offense.filter(func(r): return r.role == "OL")[0].duplicate()
-	o_r.pwr = drill_ol
-	var ol := _make_player(poss, {slot = "C", role = "OL"}, o_r, Vector2(lx - 0.6 * d, ball_y))
-	ol.job = "block"
-	var d_r: Dictionary = teams[1 - poss].defense[1].duplicate()
-	d_r.pwr = drill_dl
-	var dl := _make_player(1 - poss, {slot = "DL2", role = "DL"}, d_r, Vector2(lx + 0.9 * d, ball_y))
-	dl.job = "rush"
+	var split: float = Tune.v.lineSplit
+	# One lineman across from one rusher, or the whole line: five on five,
+	# each rusher head up on a lineman.
+	var lanes := [0.0] if not drill_five else [-2.6, -1.3, 0.0, 1.3, 2.6]
+	var slots := ["LT", "LG", "C", "RG", "RT"] if drill_five else ["C"]
+	var ol_roster: Array = teams[poss].offense.filter(func(r): return r.role == "OL")
+	var dl_roster: Array = teams[1 - poss].defense.filter(func(r): return r.role == "DL")
+	var dl: P = null
+	for i in lanes.size():
+		var o_r: Dictionary = ol_roster[i % ol_roster.size()].duplicate()
+		o_r.pwr = drill_ol
+		var ol := _make_player(poss, {slot = slots[i], role = "OL"}, o_r, Vector2(lx - d * split * 0.45, ball_y + lanes[i] * d))
+		ol.job = "block"
+		var d_r: Dictionary = dl_roster[(i + 1) % dl_roster.size()].duplicate()
+		d_r.pwr = drill_dl
+		var rusher := _make_player(1 - poss, {slot = "DL%d" % (i + 1), role = "DL"}, d_r, Vector2(lx + d * split * 0.55, ball_y + lanes[i] * d))
+		rusher.job = "rush"
+		if lanes[i] == 0.0:
+			dl = rusher
 	# The quarterback's spot: the target, not drawn as a player.
 	qb = P.new()
 	qb.team = poss
@@ -1963,7 +1999,7 @@ func _drill_setup() -> void:
 	carrier = qb
 	controlled = dl if drill_user else null
 	if drill_user:
-		_banner("", "Tap to snap · push toward the QB to drive him back · push up or down to slip off his edge")
+		_banner("", ("Tap a rusher to play him · " if drill_five else "") + "Tap to snap · push toward the QB to drive him back · push up or down to slip off his edge")
 	else:
 		_banner("", "")
 
@@ -1973,11 +2009,18 @@ func drill_snap() -> void:
 		_snap()
 
 
+## The lineman to show on the drill's meter: the one blocking you, or the
+## one driven back the farthest.
 func drill_ol_player() -> P:
+	var best: P = null
 	for p: P in players:
-		if p.role == "OL":
+		if p.role != "OL":
+			continue
+		if controlled != null and p.engaged == controlled:
 			return p
-	return null
+		if best == null or p.give > best.give:
+			best = p
+	return best
 
 
 func drill_dl_player() -> P:
@@ -1990,13 +2033,16 @@ func drill_dl_player() -> P:
 ## The rusher wins by getting around and reaching the quarterback's spot;
 ## the lineman wins by holding him off until time runs out.
 func _drill_check() -> void:
-	var dl := drill_dl_player()
-	if dl == null:
-		return
-	if drill_beat < 0 and dl.free > 0:
-		drill_beat = t
-		events.append({type = "miss", team = dl.team})
-	if dl.at.distance_to(qb.at) < Tune.v.tackleReach + 0.3:
+	var dl: P = null
+	for p: P in players:
+		if p.role != "DL":
+			continue
+		if drill_beat < 0 and p.free > 0:
+			drill_beat = t
+			events.append({type = "miss", team = p.team})
+		if p.at.distance_to(qb.at) < Tune.v.tackleReach + 0.3:
+			dl = p
+	if dl != null:
 		dl.set_act("tackler")
 		dl.down = 1.0
 		events.append({type = "tackle", team = poss, big = true})

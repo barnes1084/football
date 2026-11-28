@@ -87,8 +87,13 @@ func _shot(spec: String) -> void:
 			g.give_ball(0, 35.0)
 			_choose_defense("base")
 			await _wait(4.5)
-		"drill", "drill_watch":
-			_start_drill(what == "drill")
+		"drill", "drill_watch", "drill5", "drill5_pre":
+			_drill.five = what.begins_with("drill5")
+			_start_drill(what != "drill_watch")
+			if what == "drill5_pre":
+				await _wait(0.6)
+				_shot_save(file)
+				return
 			await _wait(0.5)
 			g.drill_snap()
 			await _wait(1.2)
@@ -130,6 +135,10 @@ func _shot(spec: String) -> void:
 		_:
 			await _wait(1.5)
 	await _wait(0.3)
+	_shot_save(file)
+
+
+func _shot_save(file: String) -> void:
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(file)
 	print("saved ", ProjectSettings.globalize_path(file))
@@ -302,7 +311,7 @@ func show_title() -> void:
 	else:
 		box.add_child(UI.button("NEW SEASON", func(): _pick_team(false), "big"))
 	box.add_child(UI.button("QUICK GAME", func(): _pick_team(true)))
-	box.add_child(UI.button("LINE DRILL: ONE ON ONE", func(): _start_drill(true)))
+	box.add_child(UI.button("LINE DRILL", func(): _start_drill(true)))
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_child(UI.button("HOW TO PLAY", _how_to))
@@ -561,7 +570,7 @@ func resume() -> void:
 
 # ---------- Line drill ----------
 
-var _drill := {you = true, dl = 0.7, ol = 0.7}
+var _drill := {you = true, dl = 0.7, ol = 0.7, five = false}
 
 
 ## One offensive lineman against one defensive lineman, nobody else: try
@@ -570,7 +579,7 @@ func _start_drill(you_rush: bool) -> void:
 	_drill.you = you_rush
 	season_game = false
 	var game := Game.new(3, "balanced", 5, "balanced", 0, 0)
-	game.start_drill(_drill.you, _drill.dl, _drill.ol)
+	game.start_drill(_drill.you, _drill.dl, _drill.ol, _drill.five)
 	_set_game(game)
 	screen = "play"
 	clear_menu()
@@ -581,7 +590,7 @@ func _start_drill(you_rush: bool) -> void:
 
 func _restart_drill() -> void:
 	var log: Array = g.drill_log
-	g.start_drill(_drill.you, _drill.dl, _drill.ol)
+	g.start_drill(_drill.you, _drill.dl, _drill.ol, _drill.five)
 	g.drill_log = log
 	field.set_game(g)
 	clear_menu()
@@ -601,6 +610,10 @@ func _drill_bar() -> void:
 		_drill.you = not _drill.you
 		_restart_drill())
 	bar.add_child(you)
+	bar.add_child(UI.button("5 ON 5" if _drill.five else "1 ON 1", func():
+		_drill.five = not _drill.five
+		g.drill_log.clear()
+		_restart_drill()))
 	for side in [["dl", "D-LINE"], ["ol", "O-LINE"]]:
 		var key: String = side[0]
 		bar.add_child(UI.button("−", func():
@@ -758,7 +771,9 @@ func _release(id: int, pos: Vector2) -> void:
 
 func _tap(pos: Vector2) -> void:
 	if g.drill:
-		g.drill_snap()
+		# In the drill a tap picks a rusher, or snaps the ball.
+		if not g.select_at(field.to_field(pos)) and g.phase == "presnap":
+			g.drill_snap()
 	elif g.phase == "presnap" and g.poss == g.user:
 		g.hike()
 	elif g.user >= 0 and g.ball_team() != g.user:

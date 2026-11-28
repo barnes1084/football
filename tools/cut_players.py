@@ -10,6 +10,10 @@ uniform on a white background, all facing right. For each figure this:
   game can paint every team's colors on the same art,
 - saves the loose football on the throwing row as the ball sprite.
 
+Extra poses come from single-figure images (EXTRA below): the blocking
+stance in art-source/pass_block.png is scaled to the size of a pose from the
+sheets, and its skin is recolored to the light and dark skin tones.
+
 Run: python3 tools/cut_players.py   (writes assets/players/<skin>/<pose>.png,
 <pose>_mask.png, assets/players/ball.png and assets/players/meta.json)
 """
@@ -35,6 +39,11 @@ ROWS = [
 ]
 PAD = 4
 
+# Extra poses from one-figure images: pose -> (file, pose on the sheets to match in height).
+EXTRA = {'passblock': ('pass_block.png', 'block')}
+# The skin tones of the two sheets (a mid tone; shading keeps its lightness).
+SKIN_TONE = {'light': np.array([240, 178, 104]), 'dark': np.array([112, 50, 8])}
+
 
 def key_out(a):
     px = a[..., :3].astype(int)
@@ -55,7 +64,7 @@ def row_bands(fg):
     return [(s.start, s.stop) for (s,) in ndimage.find_objects(lab) if s.stop - s.start > 40]
 
 
-def uniform_mask(img):
+def uniform_mask(img, force_upright=None):
     """Which pixels are uniform (white/grey, not skin, not outline), split
     into helmet, jersey and pants by the outlines between them."""
     px = img[..., :3].astype(float)
@@ -73,7 +82,7 @@ def uniform_mask(img):
     top, bottom = ys.min(), ys.max()
     height = bottom - top + 1
     # The head: the highest part of the figure, front-most when lying down.
-    upright = height > w * 0.6
+    upright = height > w * 0.6 if force_upright is None else force_upright
     sizes = ndimage.sum(cloth, lab, range(1, n + 1))
     cents = ndimage.center_of_mass(cloth, lab, range(1, n + 1))
     objs = ndimage.find_objects(lab)
@@ -159,9 +168,47 @@ def main():
                 Image.fromarray(mask).save(os.path.join(out, skin, name + '_mask.png'))
                 if skin == 'light':
                     meta[name] = {'size': [w, h], 'foot': [foot_x, foot_y], 'top': int(rows_any.min())}
+    for name, (fname, ref) in EXTRA.items():
+        cut_extra(name, fname, ref, meta)
     with open(os.path.join(out, 'meta.json'), 'w') as f:
         json.dump(meta, f, indent=1)
     print('wrote', len(meta) - 1, 'poses')
+
+
+def cut_extra(name, fname, ref, meta):
+    """One figure from its own image, scaled to the height of `ref`, in both skins."""
+    a = key_out(np.asarray(Image.open(os.path.join(src_dir, fname)).convert('RGBA')))
+    ys, xs = np.nonzero(a[..., 3] > 40)
+    a = a[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+    ref_h = meta[ref]['foot'][1] - meta[ref]['top']
+    scale = ref_h / a.shape[0]
+    img = Image.fromarray(a).resize((max(1, round(a.shape[1] * scale)), max(1, round(a.shape[0] * scale))), Image.LANCZOS)
+    a = np.asarray(img).copy()
+    a[..., 3] = np.where(a[..., 3] > 110, 255, 0)
+    px = a[..., :3].astype(float)
+    skin = (a[..., 3] > 0) & (px[..., 0] - px[..., 2] > 50) & (px.max(axis=2) > 50)
+    lum = px.mean(axis=2) / max(1.0, px[skin].mean(axis=1).mean()) if skin.any() else None
+    cut = np.pad(a, ((PAD, PAD), (PAD, PAD), (0, 0)))
+    skin = np.pad(skin, PAD)
+    lum = np.pad(lum, PAD, constant_values=1.0) if lum is not None else None
+    h, w = cut.shape[:2]
+    opaque = cut[..., 3] > 128
+    rows_any = np.nonzero(opaque.any(axis=1))[0]
+    foot_y = int(rows_any.max())
+    low = opaque[foot_y - 12:foot_y + 1].any(axis=0)
+    fx = np.nonzero(low)[0]
+    foot_x = int((fx.min() + fx.max()) / 2)
+    for skin_name, tone in SKIN_TONE.items():
+        out_img = cut.copy()
+        if lum is not None:
+            out_img[skin, :3] = np.clip(tone[None, :] * lum[skin][:, None], 0, 255).astype(np.uint8)
+        Image.fromarray(out_img).save(os.path.join(out, skin_name, name + '.png'))
+        region = uniform_mask(out_img, force_upright=True)
+        mask = np.zeros((h, w, 4), np.uint8)
+        mask[region == 1] = [255, 0, 0, 255]
+        mask[region == 2] = [0, 255, 0, 255]
+        Image.fromarray(mask).save(os.path.join(out, skin_name, name + '_mask.png'))
+    meta[name] = {'size': [w, h], 'foot': [foot_x, foot_y], 'top': int(rows_any.min())}
 
 
 if __name__ == '__main__':
